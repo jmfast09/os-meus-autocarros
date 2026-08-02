@@ -130,6 +130,7 @@
     <div class="line-badge">1724</div>
     <input type="date" id="schedDate">
   </div>
+  <div class="sub" id="schedRange" style="margin: -6px 0 12px;"></div>
   <div id="schedResults"></div>
 </section>
 <footer>Dados: api.carrismetropolitana.pt · atualiza a cada 20s</footer>
@@ -346,18 +347,33 @@ function timesForStopOnDate(patterns, stopId, dateStr) {
   return out;
 }
 
+function fmtDatePt(yyyymmdd) {
+  return `${yyyymmdd.slice(6, 8)}/${yyyymmdd.slice(4, 6)}/${yyyymmdd.slice(0, 4)}`;
+}
+
 async function renderSchedule() {
   const dateInput = document.getElementById('schedDate');
   const dateStr = dateInput.value.replaceAll('-', '');
   const resultsEl = document.getElementById('schedResults');
+  const rangeEl = document.getElementById('schedRange');
   resultsEl.innerHTML = '<div class="empty">A carregar horários…</div>';
   try {
     const patterns = await loadSchedPatterns();
+
+    let minDate = null, maxDate = null;
+    patterns.forEach(pat => pat.trips.forEach(trip => trip.valid_on.forEach(d => {
+      if (!minDate || d < minDate) minDate = d;
+      if (!maxDate || d > maxDate) maxDate = d;
+    })));
+    rangeEl.textContent = minDate
+      ? `Horários publicados entre ${fmtDatePt(minDate)} e ${fmtDatePt(maxDate)}`
+      : '';
+
     resultsEl.innerHTML = STOPS.map(s => {
       const times = timesForStopOnDate(patterns, s.id, dateStr);
       const itemsHtml = times.length
         ? times.map(t => `<li class="sched-item"><span class="t">${fmtTime(t.time)}</span><span class="h">${t.headsign}</span></li>`).join('')
-        : '<li class="empty">Sem horários publicados para esta data (o feed da Carris só cobre alguns meses de cada vez).</li>';
+        : '<li class="empty">Sem horários publicados para esta data.</li>';
       return `
         <section class="card">
           <div class="card-head"><div class="label">${s.label}</div><div class="sub">${s.sub}</div></div>
