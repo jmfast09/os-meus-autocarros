@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#c61d23">
+<title>Os Meus Autocarros</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23c61d23'/%3E%3Ctext x='50' y='68' font-size='60' text-anchor='middle' fill='white' font-family='sans-serif'%3E🚌%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23c61d23'/%3E%3Ctext x='50' y='68' font-size='60' text-anchor='middle' fill='white' font-family='sans-serif'%3E🚌%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+  :root {
+    --red: #c61d23;
+    --bg: #f4f4f6;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b6b6f;
+    --line: #ececee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121214;
+      --card: #1c1c1f;
+      --text: #f0f0f0;
+      --muted: #9a9a9e;
+      --line: #2c2c30;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--red);
+    color: white;
+    padding: env(safe-area-inset-top, 0) 16px 12px;
+    padding-top: max(14px, env(safe-area-inset-top));
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  #refreshBtn {
+    background: rgba(255,255,255,0.2); border: none; color: white;
+    width: 34px; height: 34px; border-radius: 50%; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #refreshBtn.spinning { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  main { padding: 12px; padding-bottom: 32px; max-width: 520px; margin: 0 auto; }
+  .card {
+    background: var(--card);
+    border-radius: 16px;
+    margin-bottom: 16px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .card-head {
+    padding: 12px 16px 8px;
+    display: flex; align-items: baseline; justify-content: space-between;
+  }
+  .card-head .label { font-size: 15px; font-weight: 700; }
+  .card-head .sub { font-size: 12px; color: var(--muted); }
+  .card-head .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .map { height: 160px; width: 100%; background: var(--line); transition: height 0.2s ease; }
+  .map.expanded { height: 240px; }
+  ul.arrivals { list-style: none; margin: 0; padding: 4px 0 8px; }
+  ul.arrivals li {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px;
+    border-top: 1px solid var(--line);
+    cursor: pointer;
+  }
+  ul.arrivals li:active { background: var(--line); }
+  ul.arrivals li.selected { background: rgba(26,115,232,0.12); }
+  .badge {
+    flex: 0 0 auto;
+    min-width: 40px; text-align: center;
+    background: var(--red); color: white;
+    font-weight: 700; font-size: 13px;
+    padding: 4px 6px; border-radius: 8px;
+  }
+  .dest { flex: 1 1 auto; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dest .time { display: block; font-size: 11px; color: var(--muted); }
+  .eta { flex: 0 0 auto; text-align: right; font-size: 14px; font-weight: 600; }
+  .eta .live { display: block; font-size: 10px; font-weight: 500; color: #2e9e4c; }
+  .eta .sched { display: block; font-size: 10px; font-weight: 500; color: var(--muted); }
+  .empty, .error { padding: 16px; font-size: 13px; color: var(--muted); }
+  .error { color: var(--red); }
+  footer { text-align: center; font-size: 11px; color: var(--muted); padding: 8px 0 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚌 Os Meus Autocarros</h1>
+  <button id="refreshBtn" onclick="refreshAll(true)">⟳</button>
+</header>
+<main id="app"></main>
+<footer>Dados: api.carrismetropolitana.pt · atualiza a cada 20s</footer>
+
+<script>
+const STOPS = [
+  { id: '120059', label: 'Casa', sub: 'Av. D. Pedro V 49', lat: 38.711291, lon: -9.246191 },
+  { id: '060462', label: 'Trabalho', sub: 'Marquês de Pombal (Metro) P3', lat: 38.725694, lon: -9.151888 },
+];
+const API = 'https://api.carrismetropolitana.pt/v2';
+const MAX_SHOW = 5;
+const maps = {};
+const vehicleMarkers = {};
+const selected = {};       // stopId -> { tripId, patternId, vehicleId, polyline }
+const shapeCache = {};     // patternId -> [[lat,lon], ...]
+
+function buildSkeleton() {
+  const app = document.getElementById('app');
+  app.innerHTML = STOPS.map(s => `
+    <section class="card" id="card-${s.id}">
+      <div class="card-head">
+        <div><div class="label">${s.label}</div><div class="sub">${s.sub}</div><div class="hint">toca num autocarro para ver o trajeto</div></div>
+      </div>
+      <div class="map" id="map-${s.id}"></div>
+      <ul class="arrivals" id="arrivals-${s.id}"><li class="empty">A carregar…</li></ul>
+    </section>
+  `).join('');
+
+  STOPS.forEach(s => {
+    const map = L.map(`map-${s.id}`, { zoomControl: false, attributionControl: false, dragging: true, scrollWheelZoom: false });
+    map.setView([s.lat, s.lon], 15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+    const stopIcon = L.divIcon({ className: '', html: '<div style="width:14px;height:14px;border-radius:50%;background:#1a73e8;border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5)"></div>', iconSize: [14,14] });
+    L.marker([s.lat, s.lon], { icon: stopIcon }).addTo(map);
+    maps[s.id] = map;
+    vehicleMarkers[s.id] = {};
+  });
+}
+
+function minutesUntil(unix) {
+  return Math.round((unix * 1000 - Date.now()) / 60000);
+}
+function fmtTime(hhmmss) {
+  if (!hhmmss) return '--:--';
+  const [h, m] = hhmmss.split(':').map(Number);
+  return `${String(h % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+async function loadStop(stop) {
+  const listEl = document.getElementById(`arrivals-${stop.id}`);
+  try {
+    const res = await fetch(`${API}/arrivals/by_stop/${stop.id}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const now = Date.now() / 1000;
+    const upcoming = data
+      .map(a => ({ ...a, sortUnix: a.estimated_arrival_unix || a.scheduled_arrival_unix }))
+      .filter(a => a.sortUnix && a.sortUnix >= now - 30)
+      .sort((a, b) => a.sortUnix - b.sortUnix)
+      .slice(0, MAX_SHOW);
+
+    if (upcoming.length === 0) {
+      listEl.innerHTML = '<li class="empty">Sem previsões nos próximos minutos.</li>';
+    } else {
+      const sel = selected[stop.id];
+      listEl.innerHTML = '';
+      upcoming.forEach(a => {
+        const isLive = !!a.estimated_arrival;
+        const mins = minutesUntil(a.sortUnix);
+        const minsLabel = mins <= 0 ? 'agora' : `${mins} min`;
+        const li = document.createElement('li');
+        if (sel && sel.tripId === a.trip_id) li.classList.add('selected');
+        li.innerHTML = `
+          <div class="badge">${a.line_id}</div>
+          <div class="dest">${a.headsign}<span class="time">previsto ${fmtTime(isLive ? a.estimated_arrival : a.scheduled_arrival)}</span></div>
+          <div class="eta">${minsLabel}${isLive ? '<span class="live">● tempo real</span>' : '<span class="sched">horário</span>'}</div>`;
+        li.addEventListener('click', () => onArrivalClick(stop, li, a));
+        listEl.appendChild(li);
+      });
+    }
+
+    // live vehicle positions: all tracked arrivals shown, plus the selected one even if it fell off the list
+    const vehicleIds = new Set(upcoming.filter(a => a.vehicle_id).map(a => a.vehicle_id));
+    if (selected[stop.id]?.vehicleId) vehicleIds.add(selected[stop.id].vehicleId);
+    updateVehicles(stop, [...vehicleIds]);
+  } catch (err) {
+    listEl.innerHTML = `<li class="error">Erro ao obter dados: ${err.message}</li>`;
+  }
+}
+
+async function updateVehicles(stop, vehicleIds) {
+  const map = maps[stop.id];
+  const marks = vehicleMarkers[stop.id];
+  const highlightId = selected[stop.id]?.vehicleId || null;
+  // remove markers no longer relevant
+  Object.keys(marks).forEach(id => {
+    if (!vehicleIds.includes(id)) { map.removeLayer(marks[id]); delete marks[id]; }
+  });
+  if (vehicleIds.length === 0) return;
+  try {
+    const res = await fetch(`${API}/vehicles`);
+    if (!res.ok) return;
+    const vehicles = await res.json();
+    const byId = Object.fromEntries(vehicles.map(v => [v.id, v]));
+    vehicleIds.forEach(id => {
+      const v = byId[id];
+      if (!v || !v.lat) return;
+      const isHighlighted = id === highlightId;
+      if (marks[id]) {
+        marks[id].setLatLng([v.lat, v.lon]);
+      } else {
+        marks[id] = L.marker([v.lat, v.lon]).addTo(map);
+      }
+      const style = isHighlighted
+        ? 'background:#1a73e8;color:white;font-size:11px;font-weight:700;padding:3px 7px;border-radius:7px;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);white-space:nowrap;'
+        : 'background:#c61d23;color:white;font-size:10px;font-weight:700;padding:2px 5px;border-radius:6px;border:1px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5);white-space:nowrap;';
+      marks[id].setIcon(L.divIcon({ className: '', html: `<div style="${style}">🚌 ${v.line_id || ''}</div>`, iconSize: null }));
+    });
+  } catch (e) { /* silent: vehicle layer is best-effort */ }
+}
+
+async function getShapeForPattern(patternId) {
+  if (shapeCache[patternId]) return shapeCache[patternId];
+  const patRes = await fetch(`${API}/patterns/${patternId}`);
+  if (!patRes.ok) return null;
+  const patData = await patRes.json();
+  const shapeId = patData[0]?.shape_id;
+  if (!shapeId) return null;
+  const shapeRes = await fetch(`${API}/shapes/${encodeURIComponent(shapeId)}`);
+  if (!shapeRes.ok) return null;
+  const shapeData = await shapeRes.json();
+  const coords = shapeData.geojson?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]);
+  if (coords) shapeCache[patternId] = coords;
+  return coords || null;
+}
+
+function clearSelection(stop) {
+  const sel = selected[stop.id];
+  if (!sel) return;
+  if (sel.polyline) maps[stop.id].removeLayer(sel.polyline);
+  delete selected[stop.id];
+  document.querySelectorAll(`#arrivals-${stop.id} li`).forEach(el => el.classList.remove('selected'));
+  document.getElementById(`map-${stop.id}`).classList.remove('expanded');
+  maps[stop.id].invalidateSize();
+  maps[stop.id].setView([stop.lat, stop.lon], 15);
+}
+
+async function onArrivalClick(stop, li, arrival) {
+  const wasSelected = selected[stop.id]?.tripId === arrival.trip_id;
+  clearSelection(stop);
+  if (wasSelected) return; // tap again to deselect
+
+  document.querySelectorAll(`#arrivals-${stop.id} li`).forEach(el => el.classList.remove('selected'));
+  li.classList.add('selected');
+  selected[stop.id] = { tripId: arrival.trip_id, patternId: arrival.pattern_id, vehicleId: arrival.vehicle_id };
+
+  const mapEl = document.getElementById(`map-${stop.id}`);
+  mapEl.classList.add('expanded');
+  maps[stop.id].invalidateSize();
+
+  const coords = await getShapeForPattern(arrival.pattern_id);
+  if (!coords || selected[stop.id]?.tripId !== arrival.trip_id) return; // selection changed while loading
+  const poly = L.polyline(coords, { color: '#1a73e8', weight: 4, opacity: 0.85 }).addTo(maps[stop.id]);
+  selected[stop.id].polyline = poly;
+  const bounds = poly.getBounds().extend([stop.lat, stop.lon]);
+  maps[stop.id].fitBounds(bounds, { padding: [24, 24] });
+
+  if (arrival.vehicle_id) updateVehicles(stop, [arrival.vehicle_id]);
+}
+
+let refreshing = false;
+async function refreshAll(manual) {
+  if (refreshing) return;
+  refreshing = true;
+  const btn = document.getElementById('refreshBtn');
+  if (manual) btn.classList.add('spinning');
+  await Promise.all(STOPS.map(loadStop));
+  if (manual) setTimeout(() => btn.classList.remove('spinning'), 400);
+  refreshing = false;
+}
+
+buildSkeleton();
+refreshAll(false);
+setInterval(() => refreshAll(false), 20000);
+</script>
+</body>
+</html>
