@@ -92,6 +92,27 @@
   .empty, .error { padding: 16px; font-size: 13px; color: var(--muted); }
   .error { color: var(--red); }
   footer { text-align: center; font-size: 11px; color: var(--muted); padding: 8px 0 20px; }
+
+  .tabbar { display: flex; gap: 8px; padding: 10px 12px 0; max-width: 520px; margin: 0 auto; }
+  .tabbtn {
+    flex: 1; padding: 9px; border: none; border-radius: 10px;
+    background: var(--card); color: var(--text);
+    font-weight: 600; font-size: 13px;
+  }
+  .tabbtn.active { background: var(--red); color: white; }
+  .schedview { padding: 12px; padding-bottom: 32px; max-width: 520px; margin: 0 auto; }
+  .sched-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .sched-controls .line-badge {
+    background: var(--red); color: white; font-weight: 700; font-size: 13px;
+    padding: 6px 10px; border-radius: 8px; flex: 0 0 auto;
+  }
+  #schedDate {
+    flex: 1 1 auto; padding: 10px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); font-size: 15px;
+  }
+  .sched-item { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 16px; border-top: 1px solid var(--line); }
+  .sched-item .t { font-size: 15px; font-weight: 700; }
+  .sched-item .h { font-size: 12px; color: var(--muted); text-align: right; }
 </style>
 </head>
 <body>
@@ -99,7 +120,18 @@
   <h1>🚌 Os Meus Autocarros</h1>
   <button id="refreshBtn" onclick="refreshAll(true)">⟳</button>
 </header>
+<nav class="tabbar">
+  <button class="tabbtn active" id="tabLiveBtn">Ao vivo</button>
+  <button class="tabbtn" id="tabSchedBtn">Horários 1724</button>
+</nav>
 <main id="app"></main>
+<section id="schedView" class="schedview" hidden>
+  <div class="sched-controls">
+    <div class="line-badge">1724</div>
+    <input type="date" id="schedDate">
+  </div>
+  <div id="schedResults"></div>
+</section>
 <footer>Dados: api.carrismetropolitana.pt · atualiza a cada 20s</footer>
 
 <script>
@@ -282,6 +314,80 @@ async function refreshAll(manual) {
 buildSkeleton();
 refreshAll(false);
 setInterval(() => refreshAll(false), 20000);
+
+// --- Horários (schedule by date) for line 1724 ---
+const SCHED_LINE_ID = '1724';
+const SCHED_PATTERN_IDS = ['1724_0_1', '1724_0_2', '1724_1_1', '1724_1_2', '1724_2_3', '1724_3_1', '1724_3_2'];
+let schedPatternsPromise = null;
+
+function loadSchedPatterns() {
+  if (!schedPatternsPromise) {
+    schedPatternsPromise = Promise.all(SCHED_PATTERN_IDS.map(async pid => {
+      const res = await fetch(`${API}/patterns/${pid}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data[0] || null;
+    })).then(results => results.filter(Boolean));
+  }
+  return schedPatternsPromise;
+}
+
+function timesForStopOnDate(patterns, stopId, dateStr) {
+  const out = [];
+  patterns.forEach(pat => {
+    if (!pat.path.some(p => p.stop_id === stopId)) return;
+    pat.trips.forEach(trip => {
+      if (!trip.valid_on.includes(dateStr)) return;
+      const stopTime = trip.schedule.find(s => s.stop_id === stopId);
+      if (stopTime) out.push({ time: stopTime.arrival_time_24h, headsign: pat.headsign });
+    });
+  });
+  out.sort((a, b) => a.time.localeCompare(b.time));
+  return out;
+}
+
+async function renderSchedule() {
+  const dateInput = document.getElementById('schedDate');
+  const dateStr = dateInput.value.replaceAll('-', '');
+  const resultsEl = document.getElementById('schedResults');
+  resultsEl.innerHTML = '<div class="empty">A carregar horários…</div>';
+  try {
+    const patterns = await loadSchedPatterns();
+    resultsEl.innerHTML = STOPS.map(s => {
+      const times = timesForStopOnDate(patterns, s.id, dateStr);
+      const itemsHtml = times.length
+        ? times.map(t => `<li class="sched-item"><span class="t">${fmtTime(t.time)}</span><span class="h">${t.headsign}</span></li>`).join('')
+        : '<li class="empty">Sem horários publicados para esta data (o feed da Carris só cobre alguns meses de cada vez).</li>';
+      return `
+        <section class="card">
+          <div class="card-head"><div class="label">${s.label}</div><div class="sub">${s.sub}</div></div>
+          <ul class="arrivals">${itemsHtml}</ul>
+        </section>`;
+    }).join('');
+  } catch (err) {
+    resultsEl.innerHTML = `<div class="error">Erro ao obter horários: ${err.message}</div>`;
+  }
+}
+
+function todayLocalISO() {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function switchTab(tab) {
+  const isLive = tab === 'live';
+  document.getElementById('app').hidden = !isLive;
+  document.getElementById('refreshBtn').style.visibility = isLive ? 'visible' : 'hidden';
+  document.getElementById('schedView').hidden = isLive;
+  document.getElementById('tabLiveBtn').classList.toggle('active', isLive);
+  document.getElementById('tabSchedBtn').classList.toggle('active', !isLive);
+  if (!isLive) renderSchedule();
+}
+
+document.getElementById('tabLiveBtn').addEventListener('click', () => switchTab('live'));
+document.getElementById('tabSchedBtn').addEventListener('click', () => switchTab('schedule'));
+document.getElementById('schedDate').addEventListener('change', renderSchedule);
+document.getElementById('schedDate').value = todayLocalISO();
 </script>
 </body>
 </html>
