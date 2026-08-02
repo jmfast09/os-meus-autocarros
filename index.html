@@ -112,7 +112,17 @@
   }
   .sched-item { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 16px; border-top: 1px solid var(--line); }
   .sched-item .t { font-size: 15px; font-weight: 700; }
+  .sched-item .t .est {
+    display: inline-block; margin-left: 6px; font-size: 9px; font-weight: 700;
+    color: #b8860b; background: rgba(184,134,11,0.15);
+    padding: 2px 5px; border-radius: 5px; vertical-align: middle;
+  }
   .sched-item .h { font-size: 12px; color: var(--muted); text-align: right; }
+  .estimate-banner {
+    background: rgba(184,134,11,0.12); border: 1px solid rgba(184,134,11,0.35);
+    color: var(--text); font-size: 12px; line-height: 1.5;
+    padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;
+  }
 </style>
 </head>
 <body>
@@ -333,14 +343,49 @@ function loadSchedPatterns() {
   return schedPatternsPromise;
 }
 
+function parseDateStr(ds) {
+  return new Date(+ds.slice(0, 4), +ds.slice(4, 6) - 1, +ds.slice(6, 8));
+}
+function formatDateStr(d) {
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const ESTIMATE_GRACE_DAYS = 6;   // how far past the known data we're willing to extrapolate
+const ESTIMATE_LOOKBACK = 4;     // how many past same-weekday occurrences to check
+const ESTIMATE_MIN_HITS = 3;     // how many of those must have actually run, to trust the pattern
+
+// Carris sometimes hasn't published a trip's exact-date calendar yet (e.g. "today").
+// When that happens, fall back to inferring from the same weekday in recent weeks,
+// but only for a few days out, and only when that weekday reliably ran recently.
+function tripValidityForDate(trip, dateStr) {
+  if (trip.valid_on.includes(dateStr)) return 'confirmed';
+  if (trip.valid_on.length === 0) return null;
+  const maxKnown = trip.valid_on.reduce((a, b) => (b > a ? b : a));
+  if (dateStr <= maxKnown) return null; // within the published window but genuinely not scheduled that day
+
+  const daysAhead = Math.round((parseDateStr(dateStr) - parseDateStr(maxKnown)) / 86400000);
+  if (daysAhead < 1 || daysAhead > ESTIMATE_GRACE_DAYS) return null;
+
+  const targetDow = parseDateStr(dateStr).getDay();
+  let cursor = parseDateStr(maxKnown);
+  const lastOccurrences = [];
+  while (lastOccurrences.length < ESTIMATE_LOOKBACK) {
+    if (cursor.getDay() === targetDow) lastOccurrences.push(formatDateStr(cursor));
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  const hits = lastOccurrences.filter(d => trip.valid_on.includes(d)).length;
+  return hits >= ESTIMATE_MIN_HITS ? 'estimated' : null;
+}
+
 function timesForStopOnDate(patterns, stopId, dateStr) {
   const out = [];
   patterns.forEach(pat => {
     if (!pat.path.some(p => p.stop_id === stopId)) return;
     pat.trips.forEach(trip => {
-      if (!trip.valid_on.includes(dateStr)) return;
+      const validity = tripValidityForDate(trip, dateStr);
+      if (!validity) return;
       const stopTime = trip.schedule.find(s => s.stop_id === stopId);
-      if (stopTime) out.push({ time: stopTime.arrival_time_24h, headsign: pat.headsign });
+      if (stopTime) out.push({ time: stopTime.arrival_time_24h, headsign: pat.headsign, estimated: validity === 'estimated' });
     });
   });
   out.sort((a, b) => a.time.localeCompare(b.time));
@@ -369,10 +414,16 @@ async function renderSchedule() {
       ? `Horários publicados entre ${fmtDatePt(minDate)} e ${fmtDatePt(maxDate)}`
       : '';
 
-    resultsEl.innerHTML = STOPS.map(s => {
-      const times = timesForStopOnDate(patterns, s.id, dateStr);
+    const stopTimes = STOPS.map(s => ({ stop: s, times: timesForStopOnDate(patterns, s.id, dateStr) }));
+    const anyEstimated = stopTimes.some(st => st.times.some(t => t.estimated));
+
+    const banner = anyEstimated
+      ? `<div class="estimate-banner">⚠️ A Carris ainda não publicou o horário oficial para ${fmtDatePt(dateStr)}. Os horários marcados como <strong>estimado</strong> são uma previsão baseada no mesmo dia da semana em semanas recentes — podem não ser exatos.</div>`
+      : '';
+
+    resultsEl.innerHTML = banner + stopTimes.map(({ stop: s, times }) => {
       const itemsHtml = times.length
-        ? times.map(t => `<li class="sched-item"><span class="t">${fmtTime(t.time)}</span><span class="h">${t.headsign}</span></li>`).join('')
+        ? times.map(t => `<li class="sched-item"><span class="t">${fmtTime(t.time)}${t.estimated ? '<span class="est">estimado</span>' : ''}</span><span class="h">${t.headsign}</span></li>`).join('')
         : '<li class="empty">Sem horários publicados para esta data.</li>';
       return `
         <section class="card">
