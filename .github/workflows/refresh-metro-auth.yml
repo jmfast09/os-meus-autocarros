@@ -2,7 +2,10 @@ name: Refresh Metro Lisboa token
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # Every 5 min (GitHub's minimum) offset from the hour/quarter marks,
+    # which are the busiest times for GitHub's scheduler and most prone
+    # to delay.
+    - cron: '2-59/5 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -37,8 +40,8 @@ jobs:
           fi
           NOW=$(date +%s)
           EXPIRES_AT=$((NOW + EXPIRES_IN))
-          python3 -c "import json; json.dump({'access_token': '$TOKEN', 'expires_at': $EXPIRES_AT}, open('metro-auth.json','w'))"
-          echo "Credentials refreshed, expires_at=$EXPIRES_AT (in ${EXPIRES_IN}s)"
+          python3 -c "import json; json.dump({'access_token': '$TOKEN', 'issued_at': $NOW, 'expires_at': $EXPIRES_AT}, open('metro-auth.json','w'))"
+          echo "Credentials refreshed, issued_at=$NOW, expires_at=$EXPIRES_AT (in ${EXPIRES_IN}s)"
 
       - name: Commit and push (retrying on conflicts)
         run: |
