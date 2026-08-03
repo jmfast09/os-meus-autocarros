@@ -132,9 +132,16 @@
 </header>
 <nav class="tabbar">
   <button class="tabbtn active" id="tabLiveBtn">Ao vivo</button>
+  <button class="tabbtn" id="tabMetroBtn">Metro</button>
   <button class="tabbtn" id="tabSchedBtn">Horários 1724</button>
 </nav>
 <main id="app"></main>
+<main id="metroView" hidden>
+  <section class="card" id="metro-card">
+    <div class="card-head"><div class="label">🚇 Metro</div></div>
+    <ul class="arrivals" id="metro-list"><li class="empty">A carregar…</li></ul>
+  </section>
+</main>
 <section id="schedView" class="schedview" hidden>
   <div class="sched-controls">
     <div class="line-badge">1724</div>
@@ -167,12 +174,7 @@ function buildSkeleton() {
       <div class="map" id="map-${s.id}"></div>
       <ul class="arrivals" id="arrivals-${s.id}"><li class="empty">A carregar…</li></ul>
     </section>
-  `).join('') + `
-    <section class="card" id="metro-card">
-      <div class="card-head"><div class="label">🚇 Metro</div></div>
-      <ul class="arrivals" id="metro-list"><li class="empty">A carregar…</li></ul>
-    </section>
-  `;
+  `).join('');
 
   STOPS.forEach(s => {
     const map = L.map(`map-${s.id}`, { zoomControl: false, attributionControl: false, dragging: true, scrollWheelZoom: false });
@@ -335,8 +337,10 @@ async function loadMetroAuth() {
 
 function metroEtaLabel(seconds) {
   if (seconds == null) return '--';
-  if (seconds <= 30) return 'a chegar';
-  return `${Math.round(seconds / 60)} min`;
+  if (seconds <= 0) return '0:00';
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 async function refreshMetro() {
@@ -503,16 +507,18 @@ function todayLocalISO() {
 }
 
 function switchTab(tab) {
-  const isLive = tab === 'live';
-  document.getElementById('app').hidden = !isLive;
-  document.getElementById('refreshBtn').style.visibility = isLive ? 'visible' : 'hidden';
-  document.getElementById('schedView').hidden = isLive;
-  document.getElementById('tabLiveBtn').classList.toggle('active', isLive);
-  document.getElementById('tabSchedBtn').classList.toggle('active', !isLive);
-  if (!isLive) renderSchedule();
+  document.getElementById('app').hidden = tab !== 'live';
+  document.getElementById('metroView').hidden = tab !== 'metro';
+  document.getElementById('schedView').hidden = tab !== 'schedule';
+  document.getElementById('refreshBtn').style.visibility = tab === 'live' ? 'visible' : 'hidden';
+  document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
+  document.getElementById('tabMetroBtn').classList.toggle('active', tab === 'metro');
+  document.getElementById('tabSchedBtn').classList.toggle('active', tab === 'schedule');
+  if (tab === 'schedule') renderSchedule();
 }
 
 document.getElementById('tabLiveBtn').addEventListener('click', () => switchTab('live'));
+document.getElementById('tabMetroBtn').addEventListener('click', () => switchTab('metro'));
 document.getElementById('tabSchedBtn').addEventListener('click', () => switchTab('schedule'));
 document.getElementById('schedDate').addEventListener('change', renderSchedule);
 document.getElementById('schedDate').value = todayLocalISO();
