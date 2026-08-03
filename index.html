@@ -565,6 +565,7 @@ async function checkCommute() {
     const upcoming = busData
       .map(a => ({ ...a, sortUnix: a.estimated_arrival_unix || a.scheduled_arrival_unix }))
       .filter(a => a.sortUnix && a.sortUnix >= now - 30)
+      .filter(a => a.line_id === '1724' && (a.headsign || '').toLowerCase().includes('linda'))
       .sort((a, b) => a.sortUnix - b.sortUnix);
 
     const arriveUnix = now + atBusStop;
