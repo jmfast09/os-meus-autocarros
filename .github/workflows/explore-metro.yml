@@ -39,8 +39,16 @@ jobs:
         run: |
           BASE="https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1"
           TOKEN=$(cat /tmp/token.txt)
-          for CODE in SS OR SA SS_AZ; do
+          for CODE in SS OR SA; do
             echo "--- code: $CODE ---"
             curl -s --cacert /tmp/ca-bundle.pem "$BASE/tempoEspera/Estacao/$CODE" -H "Authorization: Bearer $TOKEN"
             echo ""
           done
+
+      - name: List all destinos
+        run: |
+          BASE="https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1"
+          TOKEN=$(cat /tmp/token.txt)
+          echo "=== infoDestinos/todos ==="
+          curl -s --cacert /tmp/ca-bundle.pem "$BASE/infoDestinos/todos" -H "Authorization: Bearer $TOKEN"
+          echo ""
