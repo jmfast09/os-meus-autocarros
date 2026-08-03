@@ -1,0 +1,45 @@
+name: Test Metro Lisboa credentials
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request access token and try an API call
+        env:
+          KEY: ${{ secrets.METRO_CONSUMER_KEY }}
+          SECRET: ${{ secrets.METRO_CONSUMER_SECRET }}
+        run: |
+          set -e
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.metrolisboa.pt:8243/token" \
+            -u "$KEY:$SECRET" \
+            -d "grant_type=client_credentials")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "Token request HTTP status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Failed to obtain access token (status $HTTP_CODE)"
+            exit 1
+          fi
+
+          echo "Token obtained successfully."
+          TOKEN=$(echo "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))")
+          EXPIRES=$(echo "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('expires_in',''))")
+          echo "Token expires_in: $EXPIRES seconds"
+
+          API_STATUS=$(curl -s -o /tmp/api_response.json -w "%{http_code}" \
+            "https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1/estadoLinha/todos" \
+            -H "Authorization: Bearer $TOKEN")
+          echo "API call status: $API_STATUS"
+          echo "API response body:"
+          cat /tmp/api_response.json
+
+          if [ "$API_STATUS" != "200" ]; then
+            echo "::error::API call failed (status $API_STATUS)"
+            exit 1
+          fi
+
+          echo "SUCCESS: credentials are valid and the API call worked."
