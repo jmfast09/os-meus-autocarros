@@ -150,7 +150,7 @@
   <div class="sub" id="schedRange" style="margin: -6px 0 12px;"></div>
   <div id="schedResults"></div>
 </section>
-<footer>Dados: api.carrismetropolitana.pt · atualiza a cada 20s</footer>
+<footer>Dados: api.carrismetropolitana.pt · atualiza a cada 10s</footer>
 
 <script>
 const STOPS = [
@@ -389,7 +389,7 @@ async function refreshAll(manual) {
 
 buildSkeleton();
 refreshAll(false);
-setInterval(() => refreshAll(false), 20000);
+setInterval(() => refreshAll(false), 10000);
 
 // --- Horários (schedule by date) for line 1724 ---
 const SCHED_LINE_ID = '1724';
