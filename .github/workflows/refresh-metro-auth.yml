@@ -1,0 +1,61 @@
+name: Refresh Metro Lisboa token
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Metro Lisboa's CA chain
+        run: |
+          curl -s "http://crt.sectigo.com/SectigoPublicServerAuthenticationCAOVR36.crt" -o /tmp/intermediate.der
+          curl -s "http://crt.sectigo.com/SectigoPublicServerAuthenticationRootR46.p7c" -o /tmp/root.p7c
+          openssl x509 -inform DER -in /tmp/intermediate.der -out /tmp/intermediate.pem
+          openssl pkcs7 -inform DER -in /tmp/root.p7c -print_certs -out /tmp/root.pem
+          cat /tmp/intermediate.pem /tmp/root.pem /etc/ssl/certs/ca-certificates.crt > /tmp/ca-bundle.pem
+
+      - name: Request a fresh token and publish it
+        env:
+          KEY: ${{ secrets.METRO_CONSUMER_KEY }}
+          SECRET: ${{ secrets.METRO_CONSUMER_SECRET }}
+        run: |
+          set -e
+          RESPONSE=$(curl -s --cacert /tmp/ca-bundle.pem -X POST "https://api.metrolisboa.pt:8243/token" -u "$KEY:$SECRET" -d "grant_type=client_credentials")
+          TOKEN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))")
+          EXPIRES_IN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('expires_in',0))")
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Failed to obtain token: $RESPONSE"
+            exit 1
+          fi
+          NOW=$(date +%s)
+          EXPIRES_AT=$((NOW + EXPIRES_IN))
+          python3 -c "import json; json.dump({'access_token': '$TOKEN', 'expires_at': $EXPIRES_AT}, open('metro-auth.json','w'))"
+          echo "Credentials refreshed, expires_at=$EXPIRES_AT (in ${EXPIRES_IN}s)"
+
+      - name: Commit and push (retrying on conflicts)
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          for i in 1 2 3 4 5; do
+            git add metro-auth.json
+            if git diff --staged --quiet; then
+              echo "No changes to commit"
+              break
+            fi
+            git commit -m "Atualiza credenciais do Metro"
+            if git push; then
+              echo "Pushed successfully"
+              break
+            fi
+            echo "Push rejected, retrying with rebase (attempt $i)..."
+            git fetch origin main
+            git rebase origin/main
+          done
