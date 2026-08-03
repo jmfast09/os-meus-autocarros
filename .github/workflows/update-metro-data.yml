@@ -59,6 +59,7 @@ jobs:
                   **p,
                   "eta1": entry.get("tempoChegada1") if entry else None,
                   "eta2": entry.get("tempoChegada2") if entry else None,
+                  "eta3": entry.get("tempoChegada3") if entry else None,
               })
 
           with open("metro-data.json", "w") as f:

@@ -359,13 +359,19 @@ function renderMetro() {
   }
   const elapsed = Date.now() / 1000 - metroSnapshot.fetched_at;
   listEl.innerHTML = metroSnapshot.platforms.map(p => {
-    const eta1 = p.eta1 != null ? Math.max(0, p.eta1 - elapsed) : null;
-    const eta2 = p.eta2 != null ? Math.max(0, p.eta2 - elapsed) : null;
+    // Once a train's countdown hits 0 it's gone — promote the next one
+    // instead of getting stuck at 0:00 until the next server refresh.
+    const upcoming = [p.eta1, p.eta2, p.eta3]
+      .filter(v => v != null)
+      .map(v => v - elapsed)
+      .filter(v => v > 0);
+    const primary = upcoming[0] ?? 0;
+    const secondary = upcoming[1] ?? null;
     return `
       <li>
         <div class="badge" style="background:${p.color}">${p.code}</div>
         <div class="dest">${p.station}<span class="time">sentido ${p.sentido}</span></div>
-        <div class="eta">${metroEtaLabel(eta1)}${eta2 != null ? `<span class="sched">próximo: ${metroEtaLabel(eta2)}</span>` : ''}</div>
+        <div class="eta">${metroEtaLabel(primary)}${secondary != null ? `<span class="sched">próximo: ${metroEtaLabel(secondary)}</span>` : ''}</div>
       </li>`;
   }).join('');
 }
