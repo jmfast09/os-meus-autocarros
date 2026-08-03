@@ -367,8 +367,13 @@ async function refreshMetro() {
 
     listEl.innerHTML = METRO_PLATFORMS.map(p => {
       const entry = stationData[p.code]?.resposta?.find(e => e.cais === p.cais);
-      const eta1 = entry ? metroEtaLabel(entry.tempoChegada1) : null;
-      const eta2 = entry ? metroEtaLabel(entry.tempoChegada2) : null;
+      // If the first train already arrived (~0s), show the next one in its
+      // place instead of sitting on "0:00" until the following poll.
+      const upcoming = entry
+        ? [entry.tempoChegada1, entry.tempoChegada2, entry.tempoChegada3].filter(v => v != null && v > 0)
+        : [];
+      const eta1 = upcoming.length ? metroEtaLabel(upcoming[0]) : null;
+      const eta2 = upcoming.length > 1 ? metroEtaLabel(upcoming[1]) : null;
       return `
         <li>
           <div class="badge" style="background:${p.color}">${p.code}</div>
