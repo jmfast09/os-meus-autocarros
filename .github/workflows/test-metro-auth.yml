@@ -7,13 +7,21 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - name: Fetch Metro Lisboa's CA chain (their root isn't in the default trust store)
+        run: |
+          curl -s "http://crt.sectigo.com/SectigoPublicServerAuthenticationCAOVR36.crt" -o /tmp/intermediate.der
+          curl -s "http://crt.sectigo.com/SectigoPublicServerAuthenticationRootR46.p7c" -o /tmp/root.p7c
+          openssl x509 -inform DER -in /tmp/intermediate.der -out /tmp/intermediate.pem
+          openssl pkcs7 -inform DER -in /tmp/root.p7c -print_certs -out /tmp/root.pem
+          cat /tmp/intermediate.pem /tmp/root.pem /etc/ssl/certs/ca-certificates.crt > /tmp/ca-bundle.pem
+
       - name: Request access token and try an API call
         env:
           KEY: ${{ secrets.METRO_CONSUMER_KEY }}
           SECRET: ${{ secrets.METRO_CONSUMER_SECRET }}
         run: |
           set -e
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.metrolisboa.pt:8243/token" \
+          RESPONSE=$(curl -s --cacert /tmp/ca-bundle.pem -w "\n%{http_code}" -X POST "https://api.metrolisboa.pt:8243/token" \
             -u "$KEY:$SECRET" \
             -d "grant_type=client_credentials")
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
@@ -30,7 +38,7 @@ jobs:
           EXPIRES=$(echo "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('expires_in',''))")
           echo "Token expires_in: $EXPIRES seconds"
 
-          API_STATUS=$(curl -s -o /tmp/api_response.json -w "%{http_code}" \
+          API_STATUS=$(curl -s --cacert /tmp/ca-bundle.pem -o /tmp/api_response.json -w "%{http_code}" \
             "https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1/estadoLinha/todos" \
             -H "Authorization: Bearer $TOKEN")
           echo "API call status: $API_STATUS"
