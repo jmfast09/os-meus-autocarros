@@ -133,6 +133,18 @@
     color: var(--text); font-size: 12px; line-height: 1.5;
     padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;
   }
+
+  .commute-body { padding: 0 16px 16px; }
+  #commuteCheckBtn {
+    width: 100%; padding: 12px; border: none; border-radius: 10px;
+    background: var(--red); color: white; font-weight: 700; font-size: 14px;
+  }
+  #commuteCheckBtn:disabled { opacity: 0.6; }
+  #commuteResult { margin-top: 14px; }
+  #commuteResult .headline { font-size: 15px; font-weight: 700; line-height: 1.4; }
+  #commuteResult .headline.ok { color: #2e9e4c; }
+  #commuteResult .headline.warn { color: var(--red); }
+  #commuteResult .breakdown { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.7; }
 </style>
 </head>
 <body>
@@ -144,6 +156,7 @@
   <button class="tabbtn active" id="tabLiveBtn">Ao vivo</button>
   <button class="tabbtn" id="tabMetroBtn">Metro</button>
   <button class="tabbtn" id="tabSchedBtn">Horários 1724</button>
+  <button class="tabbtn" id="tabCommuteBtn">🏃 Já posso sair?</button>
 </nav>
 <main id="app"></main>
 <main id="metroView" hidden>
@@ -165,6 +178,16 @@
   </div>
   <div class="sub" id="schedRange" style="margin: -6px 0 12px;"></div>
   <div id="schedResults"></div>
+</section>
+<section id="commuteView" class="schedview" hidden>
+  <section class="card" id="commute-card">
+    <div class="card-head"><div class="label">🏃 Já posso sair?</div></div>
+    <div class="commute-body">
+      <p class="sub" style="margin: 0 0 12px;">Escritório → Oriente (vermelha) → Saldanha (troca para amarela) → Marquês de Pombal → a pé até à P3, para o 1724.</p>
+      <button id="commuteCheckBtn">Calcular agora</button>
+      <div id="commuteResult"></div>
+    </div>
+  </section>
 </section>
 <footer>Dados: api.carrismetropolitana.pt · atualiza a cada 10s</footer>
 
@@ -464,6 +487,115 @@ async function requestMetroRefresh() {
   }
 }
 
+// --- "Já posso sair?": estimates whether leaving the office right now gets
+// you to the 1724 at Marquês P3 in time. Walking and in-vehicle legs are
+// fixed durations (measured for this specific commute, not live data). The
+// two metro waits use the live "next 2 trains" ETAs to derive the current
+// headway and project forward to the train you'd actually catch, since a
+// train arriving "now" may already be gone by the time you reach the
+// platform.
+const COMMUTE_WALK_TO_ORIENTE = 7 * 60;
+const COMMUTE_RIDE_ORIENTE_SALDANHA = 11 * 60;
+const COMMUTE_TRANSFER_SALDANHA = 1.5 * 60;
+const COMMUTE_RIDE_SALDANHA_MARQUES = 3 * 60;
+const COMMUTE_WALK_TO_STOP = 3 * 60;
+const COMMUTE_BUS_BUFFER = 60;
+const COMMUTE_DEFAULT_HEADWAY = 6 * 60;
+const COMMUTE_ORIENTE_CAIS = 'MO4ORO';
+const COMMUTE_SALDANHA_CAIS = 'CU3SA1O';
+const COMMUTE_BUS_STOP_ID = '060462';
+
+// Given the next 2 known arrivals (seconds from now) at a platform, project
+// forward at the same headway and return the first one still catchable if
+// you reach the platform `neededOffset` seconds from now.
+function commuteNextCatchable(chegada1, chegada2, neededOffset) {
+  if (chegada1 == null) return null;
+  const headway = (chegada2 != null && chegada2 > chegada1) ? (chegada2 - chegada1) : COMMUTE_DEFAULT_HEADWAY;
+  let t = chegada1;
+  while (t < neededOffset) t += headway;
+  return t;
+}
+
+function commuteClockLabel(offsetSeconds, baseMs) {
+  const d = new Date(baseMs + offsetSeconds * 1000);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+async function checkCommute() {
+  const btn = document.getElementById('commuteCheckBtn');
+  const resultEl = document.getElementById('commuteResult');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  resultEl.innerHTML = '<p class="sub" style="margin:0;">A calcular…</p>';
+  const startMs = Date.now();
+  try {
+    const auth = await loadMetroAuth();
+    const now = startMs / 1000;
+    if (!auth.access_token || auth.expires_at < now + 15) {
+      throw new Error('credenciais do Metro por renovar — usa o botão na aba Metro');
+    }
+
+    const [orienteRes, saldanhaRes, busRes] = await Promise.all([
+      fetch(`${METRO_API}/tempoEspera/Estacao/OR`, { headers: { Authorization: `Bearer ${auth.access_token}` } }),
+      fetch(`${METRO_API}/tempoEspera/Estacao/SA`, { headers: { Authorization: `Bearer ${auth.access_token}` } }),
+      fetch(`${API}/arrivals/by_stop/${COMMUTE_BUS_STOP_ID}`),
+    ]);
+    if (!orienteRes.ok || !saldanhaRes.ok) throw new Error('sem dados do Metro no Oriente/Saldanha');
+    if (!busRes.ok) throw new Error(`HTTP ${busRes.status} nos autocarros`);
+
+    const orienteEntry = (await orienteRes.json()).resposta?.find(e => e.cais === COMMUTE_ORIENTE_CAIS);
+    const saldanhaEntry = (await saldanhaRes.json()).resposta?.find(e => e.cais === COMMUTE_SALDANHA_CAIS);
+    const busData = await busRes.json();
+    if (!orienteEntry || !saldanhaEntry) throw new Error('sem previsão nos cais do Oriente/Saldanha');
+
+    // Leg 1: walk to Oriente, catch a red-line train towards São Sebastião.
+    const atOriente = COMMUTE_WALK_TO_ORIENTE;
+    const boardOriente = commuteNextCatchable(orienteEntry.tempoChegada1, orienteEntry.tempoChegada2, atOriente);
+    if (boardOriente == null) throw new Error('sem previsão de comboios no Oriente');
+
+    // Leg 2: ride to Saldanha, transfer, catch a yellow-line train towards Rato.
+    const atYellowPlatform = boardOriente + COMMUTE_RIDE_ORIENTE_SALDANHA + COMMUTE_TRANSFER_SALDANHA;
+    const boardSaldanha = commuteNextCatchable(saldanhaEntry.tempoChegada1, saldanhaEntry.tempoChegada2, atYellowPlatform);
+    if (boardSaldanha == null) throw new Error('sem previsão de comboios em Saldanha');
+
+    // Leg 3: ride to Marquês de Pombal, walk to the P3 stop.
+    const atBusStop = boardSaldanha + COMMUTE_RIDE_SALDANHA_MARQUES + COMMUTE_WALK_TO_STOP;
+    const arriveClock = commuteClockLabel(atBusStop, startMs);
+
+    const upcoming = busData
+      .map(a => ({ ...a, sortUnix: a.estimated_arrival_unix || a.scheduled_arrival_unix }))
+      .filter(a => a.sortUnix && a.sortUnix >= now - 30)
+      .sort((a, b) => a.sortUnix - b.sortUnix);
+
+    const arriveUnix = now + atBusStop;
+    const catchable = upcoming.find(a => a.sortUnix >= arriveUnix + COMMUTE_BUS_BUFFER);
+
+    const breakdown = `
+      <div class="breakdown">
+        Chegas ao Oriente: ${commuteClockLabel(atOriente, startMs)}<br>
+        Comboio vermelho: ${commuteClockLabel(boardOriente, startMs)}<br>
+        Chegas a Saldanha: ${commuteClockLabel(boardOriente + COMMUTE_RIDE_ORIENTE_SALDANHA, startMs)}<br>
+        Comboio amarelo: ${commuteClockLabel(boardSaldanha, startMs)}<br>
+        Chegas ao Marquês de Pombal: ${commuteClockLabel(boardSaldanha + COMMUTE_RIDE_SALDANHA_MARQUES, startMs)}<br>
+        Chegas à paragem P3: ${arriveClock}
+      </div>`;
+
+    if (catchable) {
+      const busClock = commuteClockLabel(catchable.sortUnix - now, startMs);
+      resultEl.innerHTML = `<div class="headline ok">Se saíres agora, chegas à paragem por volta das ${arriveClock} — deves apanhar o 1724 das ${busClock}.</div>${breakdown}`;
+    } else if (upcoming.length) {
+      const nextClock = commuteClockLabel(upcoming[0].sortUnix - now, startMs);
+      resultEl.innerHTML = `<div class="headline warn">Chegarias à paragem por volta das ${arriveClock} — não deves apanhar os próximos autocarros previstos (o mais próximo é às ${nextClock}).</div>${breakdown}`;
+    } else {
+      resultEl.innerHTML = `<div class="headline warn">Chegarias à paragem por volta das ${arriveClock}, mas não há previsões de autocarros no momento.</div>${breakdown}`;
+    }
+  } catch (err) {
+    resultEl.innerHTML = `<p class="error" style="padding:0;">Erro: ${err.message}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function refreshAll(manual) {
   if (refreshing) return;
   refreshing = true;
@@ -597,17 +729,21 @@ function switchTab(tab) {
   document.getElementById('app').hidden = tab !== 'live';
   document.getElementById('metroView').hidden = tab !== 'metro';
   document.getElementById('schedView').hidden = tab !== 'schedule';
+  document.getElementById('commuteView').hidden = tab !== 'commute';
   document.getElementById('refreshBtn').style.visibility = tab === 'live' ? 'visible' : 'hidden';
   document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
   document.getElementById('tabMetroBtn').classList.toggle('active', tab === 'metro');
   document.getElementById('tabSchedBtn').classList.toggle('active', tab === 'schedule');
+  document.getElementById('tabCommuteBtn').classList.toggle('active', tab === 'commute');
   if (tab === 'schedule') renderSchedule();
 }
 
 document.getElementById('tabLiveBtn').addEventListener('click', () => switchTab('live'));
 document.getElementById('tabMetroBtn').addEventListener('click', () => switchTab('metro'));
 document.getElementById('tabSchedBtn').addEventListener('click', () => switchTab('schedule'));
+document.getElementById('tabCommuteBtn').addEventListener('click', () => switchTab('commute'));
 document.getElementById('metroRefreshBtn').addEventListener('click', requestMetroRefresh);
+document.getElementById('commuteCheckBtn').addEventListener('click', checkCommute);
 document.getElementById('schedDate').addEventListener('change', renderSchedule);
 document.getElementById('schedDate').value = todayLocalISO();
 </script>
