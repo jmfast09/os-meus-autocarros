@@ -1,0 +1,88 @@
+name: Update Metro Lisboa wait times
+
+on:
+  schedule:
+    - cron: '*/3 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Metro Lisboa's CA chain
+        run: |
+          curl -s "http://crt.sectigo.com/SectigoPublicServerAuthenticationCAOVR36.crt" -o /tmp/intermediate.der
+          curl -s "http://crt.sectigo.com/SectigoPublicServerAuthenticationRootR46.p7c" -o /tmp/root.p7c
+          openssl x509 -inform DER -in /tmp/intermediate.der -out /tmp/intermediate.pem
+          openssl pkcs7 -inform DER -in /tmp/root.p7c -print_certs -out /tmp/root.pem
+          cat /tmp/intermediate.pem /tmp/root.pem /etc/ssl/certs/ca-certificates.crt > /tmp/ca-bundle.pem
+
+      - name: Fetch wait times and publish metro-data.json
+        env:
+          KEY: ${{ secrets.METRO_CONSUMER_KEY }}
+          SECRET: ${{ secrets.METRO_CONSUMER_SECRET }}
+        run: |
+          set -e
+          TOKEN=$(curl -s --cacert /tmp/ca-bundle.pem -X POST "https://api.metrolisboa.pt:8243/token" \
+            -u "$KEY:$SECRET" -d "grant_type=client_credentials" | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+          BASE="https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1"
+          for CODE in SS OR SA; do
+            curl -s --cacert /tmp/ca-bundle.pem "$BASE/tempoEspera/Estacao/$CODE" -H "Authorization: Bearer $TOKEN" -o "/tmp/station_$CODE.json"
+          done
+
+          python3 <<'PYEOF'
+          import json, time
+
+          PLATFORMS = [
+              {"code": "SS", "cais": "S1C4SS1", "station": "São Sebastião", "sentido": "Reboleira", "color": "#0067b1"},
+              {"code": "OR", "cais": "MO4ORO", "station": "Oriente", "sentido": "São Sebastião", "color": "#e30613"},
+              {"code": "SA", "cais": "A24SA2O", "station": "Saldanha", "sentido": "São Sebastião (Vermelha)", "color": "#e30613"},
+              {"code": "SA", "cais": "CU3SA1O", "station": "Saldanha", "sentido": "Rato (Amarela)", "color": "#f2c500"},
+          ]
+
+          station_data = {}
+          for code in ("SS", "OR", "SA"):
+              with open(f"/tmp/station_{code}.json") as f:
+                  station_data[code] = json.load(f)
+
+          out = []
+          for p in PLATFORMS:
+              entries = station_data.get(p["code"], {}).get("resposta", [])
+              entry = next((e for e in entries if e.get("cais") == p["cais"]), None)
+              out.append({
+                  **p,
+                  "eta1": entry.get("tempoChegada1") if entry else None,
+                  "eta2": entry.get("tempoChegada2") if entry else None,
+              })
+
+          with open("metro-data.json", "w") as f:
+              json.dump({"fetched_at": int(time.time()), "platforms": out}, f, ensure_ascii=False)
+          PYEOF
+
+          cat metro-data.json
+
+      - name: Commit and push (retrying on conflicts)
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          for i in 1 2 3 4 5; do
+            git add metro-data.json
+            if git diff --staged --quiet; then
+              echo "No changes to commit"
+              break
+            fi
+            git commit -m "Atualiza tempos de espera do Metro"
+            if git push; then
+              echo "Pushed successfully"
+              break
+            fi
+            echo "Push rejected, retrying with rebase (attempt $i)..."
+            git fetch origin main
+            git rebase origin/main
+          done
