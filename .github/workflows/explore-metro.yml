@@ -15,34 +15,32 @@ jobs:
           openssl pkcs7 -inform DER -in /tmp/root.p7c -print_certs -out /tmp/root.pem
           cat /tmp/intermediate.pem /tmp/root.pem /etc/ssl/certs/ca-certificates.crt > /tmp/ca-bundle.pem
 
-      - name: Get token and explore stations
+      - name: Get token
         env:
           KEY: ${{ secrets.METRO_CONSUMER_KEY }}
           SECRET: ${{ secrets.METRO_CONSUMER_SECRET }}
         run: |
           set -e
-          TOKEN=$(curl -s --cacert /tmp/ca-bundle.pem -X POST "https://api.metrolisboa.pt:8243/token" \
-            -u "$KEY:$SECRET" -d "grant_type=client_credentials" | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+          TOKEN=$(curl -s --cacert /tmp/ca-bundle.pem -X POST "https://api.metrolisboa.pt:8243/token" -u "$KEY:$SECRET" -d "grant_type=client_credentials" | jq -r .access_token)
+          echo "$TOKEN" > /tmp/token.txt
 
+      - name: List all stations (raw)
+        run: |
           BASE="https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1"
-
-          echo "=== Stations matching São Sebastião / Oriente / Saldanha ==="
-          curl -s --cacert /tmp/ca-bundle.pem "$BASE/infoEstacao/todos" -H "Authorization: Bearer $TOKEN" \
-            | python3 -c "
-import json,sys
-data = json.load(sys.stdin)
-print(json.dumps(data, indent=2, ensure_ascii=False)[:500])
-print('---')
-items = data.get('resposta', data) if isinstance(data, dict) else data
-if isinstance(items, dict):
-    items = items.get('estacao') or list(items.values())
-for it in items:
-    name = json.dumps(it, ensure_ascii=False)
-    if 'ebasti' in name or 'riente' in name or 'aldanha' in name:
-        print(name)
-"
-
+          TOKEN=$(cat /tmp/token.txt)
+          curl -s --cacert /tmp/ca-bundle.pem "$BASE/infoEstacao/todos" -H "Authorization: Bearer $TOKEN" -o /tmp/estacoes.json
+          echo "=== raw shape ==="
+          head -c 500 /tmp/estacoes.json
           echo ""
-          echo "=== Sample tempoEspera for a São Sebastião-like code (try SS) ==="
-          curl -s --cacert /tmp/ca-bundle.pem "$BASE/tempoEspera/Estacao/SS" -H "Authorization: Bearer $TOKEN"
-          echo ""
+          echo "=== stations matching Sebastiao / Oriente / Saldanha ==="
+          jq -c '.. | objects | select((.. | strings | ascii_downcase) as $s | ["ebasti","riente","aldanha"] | any($s | test(.)))' /tmp/estacoes.json || true
+
+      - name: Sample tempoEspera call for a guessed code
+        run: |
+          BASE="https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1"
+          TOKEN=$(cat /tmp/token.txt)
+          for CODE in SS OR SA SS_AZ; do
+            echo "--- code: $CODE ---"
+            curl -s --cacert /tmp/ca-bundle.pem "$BASE/tempoEspera/Estacao/$CODE" -H "Authorization: Bearer $TOKEN"
+            echo ""
+          done
