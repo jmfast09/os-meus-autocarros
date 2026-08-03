@@ -167,7 +167,12 @@ function buildSkeleton() {
       <div class="map" id="map-${s.id}"></div>
       <ul class="arrivals" id="arrivals-${s.id}"><li class="empty">A carregar…</li></ul>
     </section>
-  `).join('');
+  `).join('') + `
+    <section class="card" id="metro-card">
+      <div class="card-head"><div class="label">🚇 Metro</div></div>
+      <ul class="arrivals" id="metro-list"><li class="empty">A carregar…</li></ul>
+    </section>
+  `;
 
   STOPS.forEach(s => {
     const map = L.map(`map-${s.id}`, { zoomControl: false, attributionControl: false, dragging: true, scrollWheelZoom: false });
@@ -312,12 +317,68 @@ async function onArrivalClick(stop, li, arrival) {
 }
 
 let refreshing = false;
+// --- Metro (real-time platform arrivals) ---
+const METRO_API = 'https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1';
+const METRO_PLATFORMS = [
+  { code: 'SS', cais: 'S1C4SS1', station: 'São Sebastião', sentido: 'Reboleira', color: '#0067b1' },
+  { code: 'OR', cais: 'MO4ORO', station: 'Oriente', sentido: 'São Sebastião', color: '#e30613' },
+  { code: 'SA', cais: 'A24SA2O', station: 'Saldanha', sentido: 'São Sebastião (Vermelha)', color: '#e30613' },
+  { code: 'SA', cais: 'CU3SA1O', station: 'Saldanha', sentido: 'Rato (Amarela)', color: '#f2c500' },
+];
+const METRO_STATION_CODES = [...new Set(METRO_PLATFORMS.map(p => p.code))];
+
+async function loadMetroAuth() {
+  const res = await fetch('./metro-auth.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error('ainda sem credenciais publicadas');
+  return res.json();
+}
+
+function metroEtaLabel(seconds) {
+  if (seconds == null) return '--';
+  if (seconds <= 30) return 'a chegar';
+  return `${Math.round(seconds / 60)} min`;
+}
+
+async function refreshMetro() {
+  const listEl = document.getElementById('metro-list');
+  try {
+    const auth = await loadMetroAuth();
+    const now = Date.now() / 1000;
+    if (!auth.access_token || auth.expires_at < now + 15) {
+      listEl.innerHTML = '<li class="empty">Credenciais do Metro a renovar — tenta novamente dentro de minutos.</li>';
+      return;
+    }
+
+    const stationData = {};
+    await Promise.all(METRO_STATION_CODES.map(async code => {
+      const res = await fetch(`${METRO_API}/tempoEspera/Estacao/${code}`, {
+        headers: { Authorization: `Bearer ${auth.access_token}` },
+      });
+      if (res.ok) stationData[code] = await res.json();
+    }));
+
+    listEl.innerHTML = METRO_PLATFORMS.map(p => {
+      const entry = stationData[p.code]?.resposta?.find(e => e.cais === p.cais);
+      const eta1 = entry ? metroEtaLabel(entry.tempoChegada1) : null;
+      const eta2 = entry ? metroEtaLabel(entry.tempoChegada2) : null;
+      return `
+        <li>
+          <div class="badge" style="background:${p.color}">${p.code}</div>
+          <div class="dest">${p.station}<span class="time">sentido ${p.sentido}</span></div>
+          <div class="eta">${eta1 || 'sem dados'}${eta2 ? `<span class="sched">próximo: ${eta2}</span>` : ''}</div>
+        </li>`;
+    }).join('');
+  } catch (err) {
+    listEl.innerHTML = `<li class="error">Erro ao obter dados do Metro: ${err.message}</li>`;
+  }
+}
+
 async function refreshAll(manual) {
   if (refreshing) return;
   refreshing = true;
   const btn = document.getElementById('refreshBtn');
   if (manual) btn.classList.add('spinning');
-  await Promise.all(STOPS.map(loadStop));
+  await Promise.all([...STOPS.map(loadStop), refreshMetro()]);
   if (manual) setTimeout(() => btn.classList.remove('spinning'), 400);
   refreshing = false;
 }
