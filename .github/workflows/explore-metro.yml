@@ -1,0 +1,48 @@
+name: Explore Metro Lisboa station data
+
+on:
+  workflow_dispatch:
+
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Metro Lisboa's CA chain
+        run: |
+          curl -s "http://crt.sectigo.com/SectigoPublicServerAuthenticationCAOVR36.crt" -o /tmp/intermediate.der
+          curl -s "http://crt.sectigo.com/SectigoPublicServerAuthenticationRootR46.p7c" -o /tmp/root.p7c
+          openssl x509 -inform DER -in /tmp/intermediate.der -out /tmp/intermediate.pem
+          openssl pkcs7 -inform DER -in /tmp/root.p7c -print_certs -out /tmp/root.pem
+          cat /tmp/intermediate.pem /tmp/root.pem /etc/ssl/certs/ca-certificates.crt > /tmp/ca-bundle.pem
+
+      - name: Get token and explore stations
+        env:
+          KEY: ${{ secrets.METRO_CONSUMER_KEY }}
+          SECRET: ${{ secrets.METRO_CONSUMER_SECRET }}
+        run: |
+          set -e
+          TOKEN=$(curl -s --cacert /tmp/ca-bundle.pem -X POST "https://api.metrolisboa.pt:8243/token" \
+            -u "$KEY:$SECRET" -d "grant_type=client_credentials" | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+          BASE="https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1"
+
+          echo "=== Stations matching São Sebastião / Oriente / Saldanha ==="
+          curl -s --cacert /tmp/ca-bundle.pem "$BASE/infoEstacao/todos" -H "Authorization: Bearer $TOKEN" \
+            | python3 -c "
+import json,sys
+data = json.load(sys.stdin)
+print(json.dumps(data, indent=2, ensure_ascii=False)[:500])
+print('---')
+items = data.get('resposta', data) if isinstance(data, dict) else data
+if isinstance(items, dict):
+    items = items.get('estacao') or list(items.values())
+for it in items:
+    name = json.dumps(it, ensure_ascii=False)
+    if 'ebasti' in name or 'riente' in name or 'aldanha' in name:
+        print(name)
+"
+
+          echo ""
+          echo "=== Sample tempoEspera for a São Sebastião-like code (try SS) ==="
+          curl -s --cacert /tmp/ca-bundle.pem "$BASE/tempoEspera/Estacao/SS" -H "Authorization: Bearer $TOKEN"
+          echo ""
