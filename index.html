@@ -75,6 +75,10 @@
   }
   #metroRefreshBtn.spinning { animation: spin 0.8s linear infinite; }
   #metroRefreshBtn:disabled { opacity: 0.5; }
+  .transfer-body { padding: 0 16px 16px; text-align: center; }
+  .transfer-diff { font-size: 28px; font-weight: 700; color: var(--muted); }
+  .transfer-diff.ok { color: #2e9e4c; }
+  .transfer-diff.warn { color: var(--red); }
   .card-head .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .map { height: 160px; width: 100%; background: var(--line); transition: height 0.2s ease; }
   .map.expanded { height: 240px; }
@@ -169,6 +173,13 @@
       </div>
     </div>
     <ul class="arrivals" id="metro-list"><li class="empty">A carregar…</li></ul>
+  </section>
+  <section class="card" id="saldanha-transfer-card">
+    <div class="card-head"><div class="label">🔄 Transição em Saldanha</div></div>
+    <div class="transfer-body">
+      <div class="transfer-diff" id="saldanha-transfer-diff">—</div>
+      <div class="sub" id="saldanha-transfer-detail">a carregar…</div>
+    </div>
   </section>
 </main>
 <section id="schedView" class="schedview" hidden>
@@ -393,9 +404,49 @@ function metroAgeLabel(seconds) {
   return `há ${Math.round(seconds / 60)} min`;
 }
 
+// Saldanha platforms used for the transfer-slack indicator below: next red
+// train arriving (towards São Sebastião) vs. next yellow train (towards
+// Rato). A gap over 1.5 min means you likely still make that yellow train;
+// under that, you're probably waiting for the following one.
+const SALDANHA_RED_CAIS = 'A24SA2O';
+const SALDANHA_YELLOW_CAIS = 'CU3SA1O';
+const SALDANHA_TRANSFER_THRESHOLD = 90;
+
+function metroDiffLabel(seconds) {
+  const sign = seconds < 0 ? '-' : '+';
+  const abs = Math.round(Math.abs(seconds));
+  const m = Math.floor(abs / 60);
+  const s = abs % 60;
+  return `${sign}${m}:${String(s).padStart(2, '0')}`;
+}
+
+function renderSaldanhaTransfer(saldanhaData) {
+  const diffEl = document.getElementById('saldanha-transfer-diff');
+  const detailEl = document.getElementById('saldanha-transfer-detail');
+  const redEntry = saldanhaData?.resposta?.find(e => e.cais === SALDANHA_RED_CAIS);
+  const yellowEntry = saldanhaData?.resposta?.find(e => e.cais === SALDANHA_YELLOW_CAIS);
+
+  if (redEntry?.tempoChegada1 == null || yellowEntry?.tempoChegada1 == null) {
+    diffEl.textContent = '—';
+    diffEl.className = 'transfer-diff';
+    detailEl.textContent = 'sem dados suficientes';
+    return;
+  }
+
+  const diff = yellowEntry.tempoChegada1 - redEntry.tempoChegada1;
+  const ok = diff > SALDANHA_TRANSFER_THRESHOLD;
+  diffEl.textContent = metroDiffLabel(diff);
+  diffEl.className = `transfer-diff ${ok ? 'ok' : 'warn'}`;
+  detailEl.textContent = ok
+    ? 'dá para fazer a transição para o amarelo'
+    : 'provavelmente tens de esperar pelo amarelo seguinte';
+}
+
 async function refreshMetro() {
   const listEl = document.getElementById('metro-list');
   const statusEl = document.getElementById('metro-status');
+  const transferDiffEl = document.getElementById('saldanha-transfer-diff');
+  const transferDetailEl = document.getElementById('saldanha-transfer-detail');
   try {
     const auth = await loadMetroAuth();
     const now = Date.now() / 1000;
@@ -414,6 +465,9 @@ async function refreshMetro() {
 
     if (!valid) {
       listEl.innerHTML = '<li class="empty">Credenciais do Metro a renovar — tenta novamente dentro de minutos.</li>';
+      transferDiffEl.textContent = '—';
+      transferDiffEl.className = 'transfer-diff';
+      transferDetailEl.textContent = 'sem dados suficientes';
       return;
     }
 
@@ -441,10 +495,15 @@ async function refreshMetro() {
           <div class="eta">${eta1 || 'sem dados'}${eta2 ? `<span class="sched">próximo: ${eta2}</span>` : ''}</div>
         </li>`;
     }).join('');
+
+    renderSaldanhaTransfer(stationData['SA']);
   } catch (err) {
     statusEl.textContent = 'sem ligação';
     statusEl.className = 'sub warn';
     listEl.innerHTML = `<li class="error">Erro ao obter dados do Metro: ${err.message}</li>`;
+    transferDiffEl.textContent = '—';
+    transferDiffEl.className = 'transfer-diff';
+    transferDetailEl.textContent = 'sem dados suficientes';
   }
 }
 
