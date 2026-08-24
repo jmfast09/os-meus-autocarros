@@ -17,6 +17,10 @@
     --text: #1a1a1a;
     --muted: #6b6b6f;
     --line: #ececee;
+    /* Darker than the dark-mode shades on purpose: on a white card these
+       need to be darker to clear 4.5:1 contrast at small text sizes. */
+    --green: #1c7a38;
+    --amber: #8a6407;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -25,6 +29,8 @@
       --text: #f0f0f0;
       --muted: #9a9a9e;
       --line: #2c2c30;
+      --green: #2e9e4c;
+      --amber: #b8860b;
     }
   }
   * { box-sizing: border-box; }
@@ -46,7 +52,7 @@
   header h1 { font-size: 17px; margin: 0; font-weight: 600; }
   #refreshBtn {
     background: rgba(255,255,255,0.2); border: none; color: white;
-    width: 34px; height: 34px; border-radius: 50%; font-size: 16px;
+    width: 44px; height: 44px; border-radius: 50%; font-size: 18px;
     display: flex; align-items: center; justify-content: center;
   }
   #refreshBtn.spinning { animation: spin 0.8s linear infinite; }
@@ -65,19 +71,19 @@
   }
   .card-head .label { font-size: 15px; font-weight: 700; }
   .card-head .sub { font-size: 12px; color: var(--muted); }
-  .card-head .sub.ok { color: #2e9e4c; }
+  .card-head .sub.ok { color: var(--green); }
   .card-head .sub.warn { color: var(--red); }
   .card-head .metro-head-right { display: flex; align-items: center; gap: 8px; }
   #metroRefreshBtn {
     background: var(--line); border: none; color: var(--text);
-    width: 24px; height: 24px; border-radius: 50%; font-size: 13px;
+    width: 44px; height: 44px; border-radius: 50%; font-size: 16px;
     display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
   }
   #metroRefreshBtn.spinning { animation: spin 0.8s linear infinite; }
   #metroRefreshBtn:disabled { opacity: 0.5; }
   .transfer-body { padding: 0 16px 16px; text-align: center; }
   .transfer-diff { font-size: 28px; font-weight: 700; color: var(--muted); }
-  .transfer-diff.ok { color: #2e9e4c; }
+  .transfer-diff.ok { color: var(--green); }
   .transfer-diff.warn { color: var(--red); }
   .card-head .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .map { height: 160px; width: 100%; background: var(--line); transition: height 0.2s ease; }
@@ -101,7 +107,7 @@
   .dest { flex: 1 1 auto; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dest .time { display: block; font-size: 11px; color: var(--muted); }
   .eta { flex: 0 0 auto; text-align: right; font-size: 14px; font-weight: 600; }
-  .eta .live { display: block; font-size: 10px; font-weight: 500; color: #2e9e4c; }
+  .eta .live { display: block; font-size: 10px; font-weight: 500; color: var(--green); }
   .eta .sched { display: block; font-size: 10px; font-weight: 500; color: var(--muted); }
   .empty, .error { padding: 16px; font-size: 13px; color: var(--muted); }
   .error { color: var(--red); }
@@ -128,7 +134,7 @@
   .sched-item .t { font-size: 15px; font-weight: 700; }
   .sched-item .t .est {
     display: inline-block; margin-left: 6px; font-size: 9px; font-weight: 700;
-    color: #b8860b; background: rgba(184,134,11,0.15);
+    color: var(--amber); background: rgba(184,134,11,0.15);
     padding: 2px 5px; border-radius: 5px; vertical-align: middle;
   }
   .sched-item .h { font-size: 12px; color: var(--muted); text-align: right; }
@@ -146,7 +152,7 @@
   #commuteCheckBtn:disabled { opacity: 0.6; }
   #commuteResult { margin-top: 14px; }
   #commuteResult .headline { font-size: 15px; font-weight: 700; line-height: 1.4; }
-  #commuteResult .headline.ok { color: #2e9e4c; }
+  #commuteResult .headline.ok { color: var(--green); }
   #commuteResult .headline.warn { color: var(--red); }
   #commuteResult .breakdown { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.7; }
 </style>
@@ -154,7 +160,7 @@
 <body>
 <header>
   <h1>🚌 Os Meus Autocarros</h1>
-  <button id="refreshBtn" onclick="refreshAll(true)">⟳</button>
+  <button id="refreshBtn" onclick="refreshAll(true)" aria-label="Atualizar">⟳</button>
 </header>
 <nav class="tabbar">
   <button class="tabbtn active" id="tabLiveBtn">Ao vivo</button>
@@ -169,7 +175,7 @@
       <div class="label">🚇 Metro</div>
       <div class="metro-head-right">
         <div class="sub" id="metro-status"></div>
-        <button id="metroRefreshBtn" title="Pedir credenciais novas">↻</button>
+        <button id="metroRefreshBtn" title="Pedir credenciais novas" aria-label="Pedir credenciais novas">↻</button>
       </div>
     </div>
     <ul class="arrivals" id="metro-list"><li class="empty">A carregar…</li></ul>
@@ -246,6 +252,47 @@ function fmtTime(hhmmss) {
   return `${String(h % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+// Text like line_id/headsign comes straight from the Carris API and is never
+// trusted — always route it through this before putting it in innerHTML.
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+// A raw "Failed to fetch" means nothing to a non-technical user; translate
+// the common case, leave anything else (like an HTTP status) as-is.
+function friendlyErrorMessage(err) {
+  const msg = String(err?.message || err || '');
+  if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) return 'sem ligação à internet';
+  return msg;
+}
+
+const lastGoodArrivals = {};  // stop.id -> { upcoming, at }
+
+function renderArrivalsList(listEl, stop, upcoming) {
+  const sel = selected[stop.id];
+  listEl.innerHTML = '';
+  upcoming.forEach(a => {
+    const isLive = !!a.estimated_arrival;
+    const mins = minutesUntil(a.sortUnix);
+    const minsLabel = mins <= 0 ? 'agora' : `${mins} min`;
+    const li = document.createElement('li');
+    if (sel && sel.tripId === a.trip_id) li.classList.add('selected');
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
+    li.innerHTML = `
+      <div class="badge">${escapeHtml(a.line_id)}</div>
+      <div class="dest">${escapeHtml(a.headsign)}<span class="time">previsto ${fmtTime(isLive ? a.estimated_arrival : a.scheduled_arrival)}</span></div>
+      <div class="eta">${minsLabel}${isLive ? '<span class="live">● tempo real</span>' : '<span class="sched">horário</span>'}</div>`;
+    li.addEventListener('click', () => onArrivalClick(stop, li, a));
+    li.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onArrivalClick(stop, li, a); }
+    });
+    listEl.appendChild(li);
+  });
+}
+
 async function loadStop(stop) {
   const listEl = document.getElementById(`arrivals-${stop.id}`);
   try {
@@ -259,24 +306,12 @@ async function loadStop(stop) {
       .sort((a, b) => a.sortUnix - b.sortUnix)
       .slice(0, MAX_SHOW);
 
+    lastGoodArrivals[stop.id] = { upcoming, at: Date.now() };
+
     if (upcoming.length === 0) {
       listEl.innerHTML = '<li class="empty">Sem previsões nos próximos minutos.</li>';
     } else {
-      const sel = selected[stop.id];
-      listEl.innerHTML = '';
-      upcoming.forEach(a => {
-        const isLive = !!a.estimated_arrival;
-        const mins = minutesUntil(a.sortUnix);
-        const minsLabel = mins <= 0 ? 'agora' : `${mins} min`;
-        const li = document.createElement('li');
-        if (sel && sel.tripId === a.trip_id) li.classList.add('selected');
-        li.innerHTML = `
-          <div class="badge">${a.line_id}</div>
-          <div class="dest">${a.headsign}<span class="time">previsto ${fmtTime(isLive ? a.estimated_arrival : a.scheduled_arrival)}</span></div>
-          <div class="eta">${minsLabel}${isLive ? '<span class="live">● tempo real</span>' : '<span class="sched">horário</span>'}</div>`;
-        li.addEventListener('click', () => onArrivalClick(stop, li, a));
-        listEl.appendChild(li);
-      });
+      renderArrivalsList(listEl, stop, upcoming);
     }
 
     // live vehicle positions: all tracked arrivals shown, plus the selected one even if it fell off the list
@@ -284,7 +319,16 @@ async function loadStop(stop) {
     if (selected[stop.id]?.vehicleId) vehicleIds.add(selected[stop.id].vehicleId);
     updateVehicles(stop, [...vehicleIds]);
   } catch (err) {
-    listEl.innerHTML = `<li class="error">Erro ao obter dados: ${err.message}</li>`;
+    const cached = lastGoodArrivals[stop.id];
+    if (cached && cached.upcoming.length) {
+      renderArrivalsList(listEl, stop, cached.upcoming);
+      const notice = document.createElement('li');
+      notice.className = 'empty';
+      notice.textContent = `Sem ligação — a mostrar dados de ${metroAgeLabel((Date.now() - cached.at) / 1000)}`;
+      listEl.prepend(notice);
+    } else {
+      listEl.innerHTML = `<li class="error">Erro ao obter dados: ${escapeHtml(friendlyErrorMessage(err))}</li>`;
+    }
   }
 }
 
@@ -450,6 +494,8 @@ function renderSaldanhaTransfer(saldanhaData) {
     : 'provavelmente tens de esperar pelo amarelo seguinte';
 }
 
+let lastGoodMetroHtml = null; // { html, at }
+
 async function refreshMetro() {
   const listEl = document.getElementById('metro-list');
   const statusEl = document.getElementById('metro-status');
@@ -504,11 +550,20 @@ async function refreshMetro() {
         </li>`;
     }).join('');
 
+    lastGoodMetroHtml = { html: listEl.innerHTML, at: Date.now() };
     renderSaldanhaTransfer(stationData['SA']);
   } catch (err) {
     statusEl.textContent = 'sem ligação';
     statusEl.className = 'sub warn';
-    listEl.innerHTML = `<li class="error">Erro ao obter dados do Metro: ${err.message}</li>`;
+    if (lastGoodMetroHtml) {
+      listEl.innerHTML = lastGoodMetroHtml.html;
+      const notice = document.createElement('li');
+      notice.className = 'empty';
+      notice.textContent = `Sem ligação — a mostrar dados de ${metroAgeLabel((Date.now() - lastGoodMetroHtml.at) / 1000)}`;
+      listEl.prepend(notice);
+    } else {
+      listEl.innerHTML = `<li class="error">Erro ao obter dados do Metro: ${escapeHtml(friendlyErrorMessage(err))}</li>`;
+    }
     transferDiffEl.textContent = '—';
     transferDiffEl.className = 'transfer-diff';
     transferDetailEl.textContent = 'sem dados suficientes';
@@ -546,7 +601,7 @@ async function requestMetroRefresh() {
     statusEl.textContent = 'sem confirmação — tenta outra vez daqui a pouco';
     statusEl.className = 'sub warn';
   } catch (err) {
-    statusEl.textContent = `erro ao pedir refresh: ${err.message}`;
+    statusEl.textContent = `erro ao pedir refresh: ${friendlyErrorMessage(err)}`;
     statusEl.className = 'sub warn';
   } finally {
     btn.disabled = false;
@@ -662,7 +717,7 @@ async function checkCommute() {
       resultEl.innerHTML = `<div class="headline warn">Chegarias à paragem por volta das ${arriveClock}, mas não há previsões de autocarros no momento.</div>${breakdown}`;
     }
   } catch (err) {
-    resultEl.innerHTML = `<p class="error" style="padding:0;">Erro: ${err.message}</p>`;
+    resultEl.innerHTML = `<p class="error" style="padding:0;">Erro: ${escapeHtml(friendlyErrorMessage(err))}</p>`;
   } finally {
     btn.disabled = false;
   }
@@ -779,7 +834,7 @@ async function renderSchedule() {
 
     resultsEl.innerHTML = banner + stopTimes.map(({ stop: s, times }) => {
       const itemsHtml = times.length
-        ? times.map(t => `<li class="sched-item"><span class="t">${fmtTime(t.time)}${t.estimated ? '<span class="est">estimado</span>' : ''}</span><span class="h">${t.headsign}</span></li>`).join('')
+        ? times.map(t => `<li class="sched-item"><span class="t">${fmtTime(t.time)}${t.estimated ? '<span class="est">estimado</span>' : ''}</span><span class="h">${escapeHtml(t.headsign)}</span></li>`).join('')
         : '<li class="empty">Sem horários publicados para esta data.</li>';
       return `
         <section class="card">
@@ -788,7 +843,7 @@ async function renderSchedule() {
         </section>`;
     }).join('');
   } catch (err) {
-    resultsEl.innerHTML = `<div class="error">Erro ao obter horários: ${err.message}</div>`;
+    resultsEl.innerHTML = `<div class="error">Erro ao obter horários: ${escapeHtml(friendlyErrorMessage(err))}</div>`;
   }
 }
 
