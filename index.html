@@ -388,8 +388,13 @@ async function updateVehicles(stop, vehicleIds) {
 }
 
 async function getShapeForPattern(patternId) {
-  if (shapeCache[patternId]) return shapeCache[patternId];
-  const patRes = await fetch(`${API}/patterns/${patternId}`);
+  // The arrivals feed sometimes prefixes pattern_id with a bracketed internal
+  // tag (e.g. "[LA77N]1724_0_1") during its instability episodes. /patterns
+  // doesn't recognize that form, so strip it before looking anything up —
+  // the shape/pattern data itself is otherwise unaffected and fine to fetch.
+  const cleanId = String(patternId || '').replace(/^(\[[^\]]*\])+/, '');
+  if (shapeCache[cleanId]) return shapeCache[cleanId];
+  const patRes = await fetch(`${API}/patterns/${cleanId}`);
   if (!patRes.ok) return null;
   const patData = await patRes.json();
   const shapeId = patData[0]?.shape_id;
@@ -398,7 +403,7 @@ async function getShapeForPattern(patternId) {
   if (!shapeRes.ok) return null;
   const shapeData = await shapeRes.json();
   const coords = shapeData.geojson?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]);
-  if (coords) shapeCache[patternId] = coords;
+  if (coords) shapeCache[cleanId] = coords;
   return coords || null;
 }
 
