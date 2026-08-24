@@ -301,7 +301,15 @@ async function updateVehicles(stop, vehicleIds) {
     const res = await fetch(`${API}/vehicles`);
     if (!res.ok) return;
     const vehicles = await res.json();
-    const byId = Object.fromEntries(vehicles.map(v => [v.id, v]));
+    // Arrivals sometimes report vehicle_id without the "agency|" prefix that
+    // /vehicles uses for its own id (e.g. "1280" vs "41|1280"), so index by
+    // both the full id and the bare suffix to match either form.
+    const byId = {};
+    vehicles.forEach(v => {
+      byId[v.id] = v;
+      const bare = v.id.split('|').pop();
+      if (bare && !(bare in byId)) byId[bare] = v;
+    });
     vehicleIds.forEach(id => {
       const v = byId[id];
       if (!v || !v.lat) return;
