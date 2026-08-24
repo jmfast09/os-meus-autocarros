@@ -624,7 +624,11 @@ async function checkCommute() {
     const upcoming = busData
       .map(a => ({ ...a, sortUnix: a.estimated_arrival_unix || a.scheduled_arrival_unix }))
       .filter(a => a.sortUnix && a.sortUnix >= now - 30)
-      .filter(a => a.line_id === '1724' && (a.headsign || '').toLowerCase().includes('linda'))
+      // The API sometimes serves line_id as an internal trip code (e.g.
+      // "LA77N") instead of "1724" during its instability episodes, so
+      // don't require both fields to look normal — either one matching is
+      // enough to identify the right bus.
+      .filter(a => String(a.line_id || '').includes('1724') || (a.headsign || '').toLowerCase().includes('linda'))
       .sort((a, b) => a.sortUnix - b.sortUnix);
 
     const arriveUnix = now + atBusStop;
