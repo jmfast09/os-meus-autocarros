@@ -407,15 +407,34 @@ async function getShapeForPattern(patternId) {
   return coords || null;
 }
 
+// Calling Leaflet's invalidateSize() while the .map container's CSS height
+// transition is still running locks in the pre-transition size internally.
+// That mismatch is invisible at first (Leaflet fits bounds against a size
+// that's briefly wrong but close enough), but panning re-projects every
+// layer against that stale size/origin, which is what makes the route line
+// visibly break apart once you drag the map. Wait for the transition to
+// actually finish before touching Leaflet's size.
+function waitForMapTransition(el) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => { if (done) return; done = true; el.removeEventListener('transitionend', finish); clearTimeout(timer); resolve(); };
+    el.addEventListener('transitionend', finish, { once: true });
+    const timer = setTimeout(finish, 300); // safety net if the transition doesn't fire (e.g. already at that height)
+  });
+}
+
 function clearSelection(stop) {
   const sel = selected[stop.id];
   if (!sel) return;
   if (sel.polyline) maps[stop.id].removeLayer(sel.polyline);
   delete selected[stop.id];
   document.querySelectorAll(`#arrivals-${stop.id} li`).forEach(el => el.classList.remove('selected'));
-  document.getElementById(`map-${stop.id}`).classList.remove('expanded');
-  maps[stop.id].invalidateSize();
-  maps[stop.id].setView([stop.lat, stop.lon], 15);
+  const mapEl = document.getElementById(`map-${stop.id}`);
+  mapEl.classList.remove('expanded');
+  waitForMapTransition(mapEl).then(() => {
+    maps[stop.id].invalidateSize();
+    maps[stop.id].setView([stop.lat, stop.lon], 15);
+  });
 }
 
 async function onArrivalClick(stop, li, arrival) {
@@ -429,6 +448,7 @@ async function onArrivalClick(stop, li, arrival) {
 
   const mapEl = document.getElementById(`map-${stop.id}`);
   mapEl.classList.add('expanded');
+  await waitForMapTransition(mapEl);
   maps[stop.id].invalidateSize();
 
   const coords = await getShapeForPattern(arrival.pattern_id);
@@ -438,7 +458,17 @@ async function onArrivalClick(stop, li, arrival) {
   const bounds = poly.getBounds().extend([stop.lat, stop.lon]);
   maps[stop.id].fitBounds(bounds, { padding: [24, 24] });
 
-  if (arrival.vehicle_id) updateVehicles(stop, [arrival.vehicle_id]);
+  if (arrival.vehicle_id) {
+    await updateVehicles(stop, [arrival.vehicle_id]);
+    // Now that the live vehicle marker (if any) is placed, widen the view
+    // so your stop and the bus's current position are both guaranteed to
+    // be in frame, not just the route shape.
+    const vehicleMark = vehicleMarkers[stop.id]?.[arrival.vehicle_id];
+    if (vehicleMark && selected[stop.id]?.tripId === arrival.trip_id) {
+      const fullBounds = poly.getBounds().extend([stop.lat, stop.lon]).extend(vehicleMark.getLatLng());
+      maps[stop.id].fitBounds(fullBounds, { padding: [24, 24] });
+    }
+  }
 }
 
 let refreshing = false;
