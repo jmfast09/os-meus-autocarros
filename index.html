@@ -368,10 +368,21 @@ async function updateVehicles(stop, vehicleIds) {
       } else {
         marks[id] = L.marker([v.lat, v.lon]).addTo(map);
       }
+      const dotColor = isHighlighted ? '#1a73e8' : '#c61d23';
       const style = isHighlighted
         ? 'background:#1a73e8;color:white;font-size:11px;font-weight:700;padding:3px 7px;border-radius:7px;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);white-space:nowrap;'
         : 'background:#c61d23;color:white;font-size:10px;font-weight:700;padding:2px 5px;border-radius:6px;border:1px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5);white-space:nowrap;';
-      marks[id].setIcon(L.divIcon({ className: '', html: `<div style="${style}">🚌 ${v.line_id || ''}</div>`, iconSize: null }));
+      // The label badge alone made it hard to tell exactly where the vehicle
+      // is under it. Anchor a small dot precisely on the coordinate instead,
+      // and float the label off to the side so it doesn't cover that point.
+      marks[id].setIcon(L.divIcon({
+        className: '',
+        iconSize: [0, 0],
+        iconAnchor: [0, 0],
+        html: `
+          <div style="position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.6);"></div>
+          <div style="position:absolute;left:9px;top:-10px;${style}">🚌 ${v.line_id || ''}</div>`,
+      }));
     });
   } catch (e) { /* silent: vehicle layer is best-effort */ }
 }
