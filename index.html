@@ -34,6 +34,10 @@
     }
   }
   * { box-sizing: border-box; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
   html, body {
     margin: 0; padding: 0;
     background: var(--bg);
@@ -162,14 +166,14 @@
   <h1>🚌 Os Meus Autocarros</h1>
   <button id="refreshBtn" onclick="refreshAll(true)" aria-label="Atualizar">⟳</button>
 </header>
-<nav class="tabbar">
-  <button class="tabbtn active" id="tabLiveBtn">Ao vivo</button>
-  <button class="tabbtn" id="tabMetroBtn">Metro</button>
-  <button class="tabbtn" id="tabSchedBtn">Horários 1724</button>
-  <button class="tabbtn" id="tabCommuteBtn">🏃 Já posso sair?</button>
+<nav class="tabbar" role="tablist">
+  <button class="tabbtn active" id="tabLiveBtn" role="tab" aria-selected="true" aria-controls="app">Ao vivo</button>
+  <button class="tabbtn" id="tabMetroBtn" role="tab" aria-selected="false" aria-controls="metroView">Metro</button>
+  <button class="tabbtn" id="tabSchedBtn" role="tab" aria-selected="false" aria-controls="schedView">Horários 1724</button>
+  <button class="tabbtn" id="tabCommuteBtn" role="tab" aria-selected="false" aria-controls="commuteView">🏃 Já posso sair?</button>
 </nav>
-<main id="app"></main>
-<main id="metroView" hidden>
+<main id="app" role="tabpanel" aria-labelledby="tabLiveBtn"></main>
+<section id="metroView" role="tabpanel" aria-labelledby="tabMetroBtn" hidden>
   <section class="card" id="metro-card">
     <div class="card-head">
       <div class="label">🚇 Metro</div>
@@ -187,16 +191,17 @@
       <div class="sub" id="saldanha-transfer-detail">a carregar…</div>
     </div>
   </section>
-</main>
-<section id="schedView" class="schedview" hidden>
+</section>
+<section id="schedView" class="schedview" role="tabpanel" aria-labelledby="tabSchedBtn" hidden>
   <div class="sched-controls">
     <div class="line-badge">1724</div>
+    <label for="schedDate" class="sr-only">Data para consultar horários da linha 1724</label>
     <input type="date" id="schedDate">
   </div>
   <div class="sub" id="schedRange" style="margin: -6px 0 12px;"></div>
   <div id="schedResults"></div>
 </section>
-<section id="commuteView" class="schedview" hidden>
+<section id="commuteView" class="schedview" role="tabpanel" aria-labelledby="tabCommuteBtn" hidden>
   <section class="card" id="commute-card">
     <div class="card-head"><div class="label">🏃 Já posso sair?</div></div>
     <div class="commute-body">
@@ -852,16 +857,20 @@ function todayLocalISO() {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
+const TAB_BUTTON_IDS = { live: 'tabLiveBtn', metro: 'tabMetroBtn', schedule: 'tabSchedBtn', commute: 'tabCommuteBtn' };
+
 function switchTab(tab) {
   document.getElementById('app').hidden = tab !== 'live';
   document.getElementById('metroView').hidden = tab !== 'metro';
   document.getElementById('schedView').hidden = tab !== 'schedule';
   document.getElementById('commuteView').hidden = tab !== 'commute';
   document.getElementById('refreshBtn').style.visibility = tab === 'live' ? 'visible' : 'hidden';
-  document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
-  document.getElementById('tabMetroBtn').classList.toggle('active', tab === 'metro');
-  document.getElementById('tabSchedBtn').classList.toggle('active', tab === 'schedule');
-  document.getElementById('tabCommuteBtn').classList.toggle('active', tab === 'commute');
+  Object.entries(TAB_BUTTON_IDS).forEach(([key, id]) => {
+    const btn = document.getElementById(id);
+    const isActive = key === tab;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-selected', String(isActive));
+  });
   if (tab === 'schedule') renderSchedule();
 }
 
