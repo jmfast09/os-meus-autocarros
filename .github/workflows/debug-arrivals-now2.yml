@@ -1,0 +1,33 @@
+name: Debug Carris arrivals now 2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dump current arrivals for both stops
+        run: |
+          date -u
+          curl -s --connect-timeout 10 --max-time 30 -w "\nHTTP_STATUS:%{http_code}\n" "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/120060" -o debug-casa2.json
+          curl -s --connect-timeout 10 --max-time 30 -w "\nHTTP_STATUS:%{http_code}\n" "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/060462" -o debug-trabalho2.json
+          echo "=== casa (120060) ==="
+          cat debug-casa2.json
+          echo
+          echo "=== trabalho (060462) ==="
+          cat debug-trabalho2.json
+
+      - name: Commit debug files
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git add debug-casa2.json debug-trabalho2.json
+          git commit -m "Debug: dump current arrivals 2" || echo "nothing to commit"
+          git push
