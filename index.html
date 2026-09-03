@@ -311,11 +311,19 @@ async function loadStop(stop) {
       .sort((a, b) => a.sortUnix - b.sortUnix)
       .slice(0, MAX_SHOW);
 
-    lastGoodArrivals[stop.id] = { upcoming, at: Date.now() };
-
     if (upcoming.length === 0) {
-      listEl.innerHTML = '<li class="empty">Sem previsões nos próximos minutos.</li>';
+      // A "no arrivals" response with HTTP 200 is itself suspicious given
+      // this API's ongoing instability (it's been swinging between 502s and
+      // empty-but-successful responses) — try the scheduled fallback before
+      // accepting "no service" at face value.
+      const scheduled = await getScheduledFallback(stop);
+      if (scheduled.length) {
+        renderScheduledFallback(listEl, scheduled);
+      } else {
+        listEl.innerHTML = '<li class="empty">Sem previsões nos próximos minutos.</li>';
+      }
     } else {
+      lastGoodArrivals[stop.id] = { upcoming, at: Date.now() };
       renderArrivalsList(listEl, stop, upcoming);
     }
 
