@@ -331,10 +331,52 @@ async function loadStop(stop) {
       notice.className = 'empty';
       notice.textContent = `Sem ligação — a mostrar dados de ${metroAgeLabel((Date.now() - cached.at) / 1000)}`;
       listEl.prepend(notice);
-    } else {
-      listEl.innerHTML = `<li class="error">Erro ao obter dados: ${escapeHtml(friendlyErrorMessage(err))}</li>`;
+      return;
     }
+
+    const scheduled = await getScheduledFallback(stop);
+    if (scheduled.length) {
+      renderScheduledFallback(listEl, scheduled);
+      return;
+    }
+
+    listEl.innerHTML = `<li class="error">Erro ao obter dados: ${escapeHtml(friendlyErrorMessage(err))}</li>`;
   }
+}
+
+// Plan B for when the live arrivals endpoint itself is down (e.g. a 502 from
+// their gateway) and there's no cached data to fall back on either:
+// /patterns is a separate endpoint and stays healthy independently of it, so
+// compute today's remaining scheduled departures from that instead of
+// showing nothing. Only covers line 1724 (the only one we have patterns
+// for), which is what both tracked stops actually run on.
+async function getScheduledFallback(stop) {
+  try {
+    const patterns = await loadSchedPatterns();
+    const dateStr = formatDateStr(new Date());
+    const nowHHMMSS = new Date().toTimeString().slice(0, 8);
+    return timesForStopOnDate(patterns, stop.id, dateStr)
+      .filter(t => t.time >= nowHHMMSS)
+      .slice(0, MAX_SHOW);
+  } catch (e) {
+    return [];
+  }
+}
+
+function renderScheduledFallback(listEl, items) {
+  listEl.innerHTML = '';
+  const notice = document.createElement('li');
+  notice.className = 'empty';
+  notice.textContent = 'Sem tempo real — a mostrar o horário previsto para hoje';
+  listEl.appendChild(notice);
+  items.forEach(t => {
+    const li = document.createElement('li');
+    li.innerHTML = `
+      <div class="badge">${escapeHtml(SCHED_LINE_ID)}</div>
+      <div class="dest">${escapeHtml(t.headsign)}<span class="time">previsto ${fmtTime(t.time)}</span></div>
+      <div class="eta"><span class="sched">horário${t.estimated ? ' estimado' : ''}</span></div>`;
+    listEl.appendChild(li);
+  });
 }
 
 async function updateVehicles(stop, vehicleIds) {
