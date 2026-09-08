@@ -1,0 +1,21 @@
+name: Debug Carris arrivals now 4
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check arrivals and vehicles
+        run: |
+          date -u
+          echo "=== casa ==="
+          curl -s --connect-timeout 10 --max-time 30 -w "\nHTTP_STATUS:%{http_code}\n" "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/120060"
+          echo "=== trabalho ==="
+          curl -s --connect-timeout 10 --max-time 30 -w "\nHTTP_STATUS:%{http_code}\n" "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/060462"
