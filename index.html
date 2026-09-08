@@ -222,7 +222,7 @@ const API = 'https://api.carrismetropolitana.pt/v2';
 const MAX_SHOW = 5;
 const maps = {};
 const vehicleMarkers = {};
-const selected = {};       // stopId -> { tripId, patternId, vehicleId, polyline }
+const selected = {};       // stopId -> { key, patternId, vehicleKey, polyline }
 const shapeCache = {};     // patternId -> [[lat,lon], ...]
 
 function buildSkeleton() {
@@ -275,6 +275,34 @@ function friendlyErrorMessage(err) {
 
 const lastGoodArrivals = {};  // stop.id -> { upcoming, at }
 
+// The arrivals feed sometimes prefixes pattern_id with a bracketed internal
+// tag (e.g. "[LA77N]1724_0_1") during its instability episodes; /patterns and
+// /vehicles both use the untagged form, so strip it before comparing/looking
+// anything up against those endpoints.
+function cleanPatternId(id) {
+  return String(id || '').replace(/^(\[[^\]]*\])+/, '');
+}
+
+// trip_id currently comes back null for every arrival (Carris's real-time
+// linking layer is down), so it can't be used as a stable identity for "is
+// this the arrival the user selected" — every null would match every other
+// null. Fall back to pattern + scheduled time, which is stable even without
+// trip_id.
+function arrivalKey(a) {
+  return a.trip_id || `${cleanPatternId(a.pattern_id)}@${a.scheduled_arrival || a.sortUnix || ''}`;
+}
+
+// Same problem for vehicle_id: it's also always null right now. /vehicles is
+// independently healthy though, so fall back to matching a vehicle by its
+// pattern_id (direction) when no vehicle_id link is available — this can't
+// pin down the exact bus for a specific arrival if more than one is running
+// that direction, but it's real live positions instead of nothing.
+function vehicleTrackingKey(a) {
+  if (a.vehicle_id) return a.vehicle_id;
+  const p = cleanPatternId(a.pattern_id);
+  return p ? `pattern:${p}` : null;
+}
+
 function renderArrivalsList(listEl, stop, upcoming) {
   const sel = selected[stop.id];
   listEl.innerHTML = '';
@@ -283,7 +311,7 @@ function renderArrivalsList(listEl, stop, upcoming) {
     const mins = minutesUntil(a.sortUnix);
     const minsLabel = mins <= 0 ? 'agora' : `${mins} min`;
     const li = document.createElement('li');
-    if (sel && sel.tripId === a.trip_id) li.classList.add('selected');
+    if (sel && sel.key === arrivalKey(a)) li.classList.add('selected');
     li.tabIndex = 0;
     li.setAttribute('role', 'button');
     li.innerHTML = `
@@ -328,8 +356,8 @@ async function loadStop(stop) {
     }
 
     // live vehicle positions: all tracked arrivals shown, plus the selected one even if it fell off the list
-    const vehicleIds = new Set(upcoming.filter(a => a.vehicle_id).map(a => a.vehicle_id));
-    if (selected[stop.id]?.vehicleId) vehicleIds.add(selected[stop.id].vehicleId);
+    const vehicleIds = new Set(upcoming.map(vehicleTrackingKey).filter(Boolean));
+    if (selected[stop.id]?.vehicleKey) vehicleIds.add(selected[stop.id].vehicleKey);
     updateVehicles(stop, [...vehicleIds]);
   } catch (err) {
     const cached = lastGoodArrivals[stop.id];
@@ -390,7 +418,7 @@ function renderScheduledFallback(listEl, items) {
 async function updateVehicles(stop, vehicleIds) {
   const map = maps[stop.id];
   const marks = vehicleMarkers[stop.id];
-  const highlightId = selected[stop.id]?.vehicleId || null;
+  const highlightId = selected[stop.id]?.vehicleKey || null;
   // remove markers no longer relevant
   Object.keys(marks).forEach(id => {
     if (!vehicleIds.includes(id)) { map.removeLayer(marks[id]); delete marks[id]; }
@@ -410,7 +438,12 @@ async function updateVehicles(stop, vehicleIds) {
       if (bare && !(bare in byId)) byId[bare] = v;
     });
     vehicleIds.forEach(id => {
-      const v = byId[id];
+      // "pattern:<id>" keys are the vehicle_id-less fallback: pick whichever
+      // vehicle is currently running that direction (best-effort — with more
+      // than one bus on the same pattern this can't tell them apart).
+      const v = id.startsWith('pattern:')
+        ? vehicles.find(veh => cleanPatternId(veh.pattern_id) === id.slice('pattern:'.length))
+        : byId[id];
       if (!v || !v.lat) return;
       const isHighlighted = id === highlightId;
       if (marks[id]) {
@@ -438,11 +471,7 @@ async function updateVehicles(stop, vehicleIds) {
 }
 
 async function getShapeForPattern(patternId) {
-  // The arrivals feed sometimes prefixes pattern_id with a bracketed internal
-  // tag (e.g. "[LA77N]1724_0_1") during its instability episodes. /patterns
-  // doesn't recognize that form, so strip it before looking anything up —
-  // the shape/pattern data itself is otherwise unaffected and fine to fetch.
-  const cleanId = String(patternId || '').replace(/^(\[[^\]]*\])+/, '');
+  const cleanId = cleanPatternId(patternId);
   if (shapeCache[cleanId]) return shapeCache[cleanId];
   const patRes = await fetch(`${API}/patterns/${cleanId}`);
   if (!patRes.ok) return null;
@@ -488,13 +517,15 @@ function clearSelection(stop) {
 }
 
 async function onArrivalClick(stop, li, arrival) {
-  const wasSelected = selected[stop.id]?.tripId === arrival.trip_id;
+  const key = arrivalKey(arrival);
+  const wasSelected = selected[stop.id]?.key === key;
   clearSelection(stop);
   if (wasSelected) return; // tap again to deselect
 
   document.querySelectorAll(`#arrivals-${stop.id} li`).forEach(el => el.classList.remove('selected'));
   li.classList.add('selected');
-  selected[stop.id] = { tripId: arrival.trip_id, patternId: arrival.pattern_id, vehicleId: arrival.vehicle_id };
+  const vehicleKey = vehicleTrackingKey(arrival);
+  selected[stop.id] = { key, patternId: arrival.pattern_id, vehicleKey };
 
   const mapEl = document.getElementById(`map-${stop.id}`);
   mapEl.classList.add('expanded');
@@ -502,19 +533,19 @@ async function onArrivalClick(stop, li, arrival) {
   maps[stop.id].invalidateSize();
 
   const coords = await getShapeForPattern(arrival.pattern_id);
-  if (!coords || selected[stop.id]?.tripId !== arrival.trip_id) return; // selection changed while loading
+  if (!coords || selected[stop.id]?.key !== key) return; // selection changed while loading
   const poly = L.polyline(coords, { color: '#1a73e8', weight: 4, opacity: 0.85 }).addTo(maps[stop.id]);
   selected[stop.id].polyline = poly;
   const bounds = poly.getBounds().extend([stop.lat, stop.lon]);
   maps[stop.id].fitBounds(bounds, { padding: [24, 24] });
 
-  if (arrival.vehicle_id) {
-    await updateVehicles(stop, [arrival.vehicle_id]);
+  if (vehicleKey) {
+    await updateVehicles(stop, [vehicleKey]);
     // Now that the live vehicle marker (if any) is placed, widen the view
     // so your stop and the bus's current position are both guaranteed to
     // be in frame, not just the route shape.
-    const vehicleMark = vehicleMarkers[stop.id]?.[arrival.vehicle_id];
-    if (vehicleMark && selected[stop.id]?.tripId === arrival.trip_id) {
+    const vehicleMark = vehicleMarkers[stop.id]?.[vehicleKey];
+    if (vehicleMark && selected[stop.id]?.key === key) {
       const fullBounds = poly.getBounds().extend([stop.lat, stop.lon]).extend(vehicleMark.getLatLng());
       maps[stop.id].fitBounds(fullBounds, { padding: [24, 24] });
     }
