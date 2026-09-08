@@ -1,0 +1,19 @@
+name: Debug Carris vehicles now
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check vehicles for line 1724
+        run: |
+          date -u
+          curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/vehicles" \
+            | jq '[.[] | select(.line_id == "1724" or (.line_id // "" | test("1724")))]'
