@@ -12,12 +12,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Check one entry's fields for stop 060462
+      - name: Check fields for stop 060462
         run: |
           date -u
-          curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/060462" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-for a in data[:5]:
-    print({k: a.get(k) for k in ['line_id','headsign','pattern_id','route_id','trip_id','vehicle_id','estimated_arrival','scheduled_arrival']})
-"
+          curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/060462" \
+            | jq '.[0:5] | map({line_id, headsign, pattern_id, route_id, trip_id, vehicle_id, estimated_arrival, scheduled_arrival})'
