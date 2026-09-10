@@ -1,0 +1,23 @@
+name: Debug Carris status now
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check arrivals + vehicles for stop 060462 / line 1724
+        run: |
+          date -u
+          echo "--- arrivals status + sample ---"
+          curl -s -o /tmp/arrivals.json -w "HTTP %{http_code}\n" --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/060462"
+          jq '.[0:5] | map({line_id, headsign, pattern_id, trip_id, vehicle_id, estimated_arrival, scheduled_arrival})' /tmp/arrivals.json
+          echo "--- vehicles status + sample for line 1724 ---"
+          curl -s -o /tmp/vehicles.json -w "HTTP %{http_code}\n" --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/vehicles"
+          jq '[.[] | select(.line_id == "1724")]' /tmp/vehicles.json
