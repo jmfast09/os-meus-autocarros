@@ -1,0 +1,48 @@
+name: Debug full chain + CORS headers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Full chain with real live data + CORS header check
+        run: |
+          date -u
+          echo "=== step 1: real arrivals for stop 120060 ==="
+          curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/120060" -o /tmp/arr.json
+          jq '.[0]' /tmp/arr.json
+          PATTERN_RAW=$(jq -r '.[0].pattern_id' /tmp/arr.json)
+          PATTERN_CLEAN=$(echo "$PATTERN_RAW" | sed -E 's/^(\[[^]]*\])+//')
+          echo "pattern_id raw=$PATTERN_RAW clean=$PATTERN_CLEAN"
+
+          echo "=== step 2: /patterns/$PATTERN_CLEAN ==="
+          curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/patterns/$PATTERN_CLEAN" -o /tmp/pat.json
+          jq '.[0] | {id, shape_id}' /tmp/pat.json
+          SHAPE_ID=$(jq -r '.[0].shape_id' /tmp/pat.json)
+          echo "shape_id=$SHAPE_ID"
+
+          echo "=== step 3: /shapes/<encoded shape_id> ==="
+          ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$SHAPE_ID")
+          echo "encoded=$ENC"
+          curl -s -w "\nHTTP %{http_code}\n" --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/shapes/$ENC" -o /tmp/shape.json
+          jq '{has_geojson: (.geojson != null), geom_type: .geojson.geometry.type}' /tmp/shape.json 2>&1 || cat /tmp/shape.json
+
+          echo "=== CORS headers comparison (as a real browser would see) ==="
+          for URL in \
+            "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/120060" \
+            "https://api.carrismetropolitana.pt/v2/vehicles" \
+            "https://api.carrismetropolitana.pt/v2/patterns/$PATTERN_CLEAN" \
+            "https://api.carrismetropolitana.pt/v2/shapes/$ENC" ; do
+            echo "--- $URL ---"
+            curl -s -D - -o /dev/null --connect-timeout 10 --max-time 30 \
+              -H "Origin: https://mfast09.github.io" \
+              "$URL" | grep -i -E "access-control|content-type|^HTTP"
+            echo
+          done
