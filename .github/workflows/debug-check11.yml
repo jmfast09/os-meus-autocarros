@@ -1,0 +1,27 @@
+name: Debug 1103 pattern shape
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check /patterns/1103_0_1 and its shape
+        run: |
+          date -u
+          echo "--- /patterns/1103_0_1 ---"
+          curl -s -w "\nHTTP %{http_code}\n" --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/patterns/1103_0_1" -o /tmp/pat.json
+          cat /tmp/pat.json | jq '.[0] | {id, shape_id}' 2>&1 || cat /tmp/pat.json
+          SHAPE_ID=$(jq -r '.[0].shape_id // empty' /tmp/pat.json)
+          echo "shape_id=$SHAPE_ID"
+          if [ -n "$SHAPE_ID" ]; then
+            echo "--- /shapes/$SHAPE_ID ---"
+            curl -s -w "\nHTTP %{http_code}\n" --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/shapes/$SHAPE_ID" -o /tmp/shape.json
+            jq '{has_geojson: (.geojson != null), coord_count: (.geojson.geometry.coordinates | length)}' /tmp/shape.json
+          fi
