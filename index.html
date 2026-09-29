@@ -275,31 +275,31 @@ function friendlyErrorMessage(err) {
 
 const lastGoodArrivals = {};  // stop.id -> { upcoming, at }
 
-// The arrivals feed sometimes prefixes pattern_id with a bracketed internal
-// tag (e.g. "[LA77N]1724_0_1") during its instability episodes; /patterns and
-// /vehicles both use the untagged form, so strip it before comparing/looking
-// anything up against those endpoints.
-function cleanPatternId(id) {
+// Carris occasionally prefixes id-like fields (pattern_id, vehicle id, ...)
+// with one or more bracketed internal tags (e.g. "[LA77N]1724_0_1", or even
+// "[VNWG3][LA77N]1724_3_1" stacked) during its instability episodes; other
+// endpoints and arrivals' own fields don't always carry the same tag, so
+// strip it before comparing/looking anything up across endpoints.
+function stripBracketTag(id) {
   return String(id || '').replace(/^(\[[^\]]*\])+/, '');
 }
 
-// trip_id currently comes back null for every arrival (Carris's real-time
-// linking layer is down), so it can't be used as a stable identity for "is
-// this the arrival the user selected" — every null would match every other
-// null. Fall back to pattern + scheduled time, which is stable even without
-// trip_id.
+// trip_id isn't always populated in arrivals (Carris's real-time linking
+// layer has intermittent outages), so it can't always be used as a stable
+// identity for "is this the arrival the user selected" — every null would
+// match every other null. Fall back to pattern + scheduled time in that case,
+// which is stable even without trip_id.
 function arrivalKey(a) {
-  return a.trip_id || `${cleanPatternId(a.pattern_id)}@${a.scheduled_arrival || a.sortUnix || ''}`;
+  return a.trip_id || `${stripBracketTag(a.pattern_id)}@${a.scheduled_arrival || a.sortUnix || ''}`;
 }
 
-// Same problem for vehicle_id: it's also always null right now. /vehicles is
-// independently healthy though, so fall back to matching a vehicle by its
-// pattern_id (direction) when no vehicle_id link is available — this can't
-// pin down the exact bus for a specific arrival if more than one is running
-// that direction, but it's real live positions instead of nothing.
+// Same problem for vehicle_id: when it's missing, fall back to matching a
+// vehicle by its pattern_id (direction) instead of showing nothing — this
+// can't pin down the exact bus for a specific arrival if more than one is
+// running that direction, but it's real live positions instead of nothing.
 function vehicleTrackingKey(a) {
   if (a.vehicle_id) return a.vehicle_id;
-  const p = cleanPatternId(a.pattern_id);
+  const p = stripBracketTag(a.pattern_id);
   return p ? `pattern:${p}` : null;
 }
 
@@ -428,13 +428,16 @@ async function updateVehicles(stop, vehicleIds) {
     const res = await fetch(`${API}/vehicles`);
     if (!res.ok) return;
     const vehicles = await res.json();
-    // Arrivals sometimes report vehicle_id without the "agency|" prefix that
-    // /vehicles uses for its own id (e.g. "1280" vs "41|1280"), so index by
-    // both the full id and the bare suffix to match either form.
+    // Arrivals reports a bare numeric vehicle_id (e.g. "1256"), but /vehicles'
+    // own id has worn different wrappers over time: an "agency|" prefix
+    // ("41|1256") and, currently, a bracketed internal tag with no pipe at
+    // all ("[LA77N]1256"). Index by the full id and by the bare form (strip
+    // both a bracket-tag prefix and any "agency|" prefix) so either shape in
+    // arrivals still resolves to the right vehicle.
     const byId = {};
     vehicles.forEach(v => {
       byId[v.id] = v;
-      const bare = v.id.split('|').pop();
+      const bare = stripBracketTag(v.id).split('|').pop();
       if (bare && !(bare in byId)) byId[bare] = v;
     });
     vehicleIds.forEach(id => {
@@ -442,7 +445,7 @@ async function updateVehicles(stop, vehicleIds) {
       // vehicle is currently running that direction (best-effort — with more
       // than one bus on the same pattern this can't tell them apart).
       const v = id.startsWith('pattern:')
-        ? vehicles.find(veh => cleanPatternId(veh.pattern_id) === id.slice('pattern:'.length))
+        ? vehicles.find(veh => stripBracketTag(veh.pattern_id) === id.slice('pattern:'.length))
         : byId[id];
       if (!v || !v.lat) return;
       const isHighlighted = id === highlightId;
@@ -471,7 +474,7 @@ async function updateVehicles(stop, vehicleIds) {
 }
 
 async function getShapeForPattern(patternId) {
-  const cleanId = cleanPatternId(patternId);
+  const cleanId = stripBracketTag(patternId);
   if (shapeCache[cleanId]) return shapeCache[cleanId];
   const patRes = await fetch(`${API}/patterns/${cleanId}`);
   if (!patRes.ok) return null;
