@@ -1,0 +1,32 @@
+name: Debug geometry types for all tracked patterns
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check geometry type + coord shape for every pattern at both stops
+        run: |
+          date -u
+          for STOP in 120060 060462; do
+            curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/$STOP" -o /tmp/arr_$STOP.json
+          done
+          jq -s '.[0] + .[1] | map(.pattern_id) | unique | .[]' /tmp/arr_120060.json /tmp/arr_060462.json -r | while read -r RAW; do
+            CLEAN=$(echo "$RAW" | sed -E 's/^(\[[^]]*\])+//')
+            echo "=== pattern raw=$RAW clean=$CLEAN ==="
+            curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/patterns/$CLEAN" -o /tmp/pat.json
+            SHAPE_ID=$(jq -r '.[0].shape_id // empty' /tmp/pat.json)
+            echo "shape_id=$SHAPE_ID"
+            if [ -z "$SHAPE_ID" ]; then echo "(no shape_id)"; echo; continue; fi
+            ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$SHAPE_ID")
+            curl -s -w "HTTP %{http_code}\n" --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/shapes/$ENC" -o /tmp/shape.json
+            jq '{geom_type: .geojson.geometry.type, first_elem_is_array_of_pairs: (.geojson.geometry.coordinates[0][0] | type == "array"), coord_count: (.geojson.geometry.coordinates | length)}' /tmp/shape.json 2>&1 || cat /tmp/shape.json
+            echo
+          done
