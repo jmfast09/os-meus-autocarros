@@ -1,0 +1,30 @@
+name: Debug vehicle match coverage
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cross-check arrivals patterns against active vehicles
+        run: |
+          date -u
+          curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/120060" -o /tmp/a1.json
+          curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/arrivals/by_stop/060462" -o /tmp/a2.json
+          curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/vehicles" -o /tmp/vehicles.json
+          echo "--- distinct (line_id, stripped pattern_id) among next 15 arrivals, stop 120060 ---"
+          jq '[.[0:15][] | {line_id, pattern_id: (.pattern_id | sub("^(\\[[^\\]]*\\])+"; ""))}] | unique' /tmp/a1.json
+          echo "--- distinct (line_id, stripped pattern_id) among next 15 arrivals, stop 060462 ---"
+          jq '[.[0:15][] | {line_id, pattern_id: (.pattern_id | sub("^(\\[[^\\]]*\\])+"; ""))}] | unique' /tmp/a2.json
+          echo "--- per wanted pattern, count of currently-active matching vehicles ---"
+          jq -s '
+            (.[2] | map(.pattern_id |= sub("^(\\[[^\\]]*\\])+"; ""))) as $vehicles |
+            ((.[0][0:15] + .[1][0:15]) | map({line_id, pattern_id: (.pattern_id | sub("^(\\[[^\\]]*\\])+"; ""))}) | unique) as $wanted |
+            [$wanted[] | . as $w | {line_id: $w.line_id, pattern_id: $w.pattern_id, vehicle_count: ([$vehicles[] | select(.pattern_id == $w.pattern_id)] | length)}]
+          ' /tmp/a1.json /tmp/a2.json /tmp/vehicles.json
