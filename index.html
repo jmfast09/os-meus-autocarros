@@ -479,7 +479,7 @@ async function getShapeForPattern(patternId) {
   const patRes = await fetch(`${API}/patterns/${cleanId}`);
   if (!patRes.ok) return null;
   const patData = await patRes.json();
-  const shapeId = patData[0]?.shape_id;
+  const shapeId = stripBracketTag(patData[0]?.shape_id);
   if (!shapeId) return null;
   const shapeRes = await fetch(`${API}/shapes/${encodeURIComponent(shapeId)}`);
   if (!shapeRes.ok) return null;
@@ -535,24 +535,28 @@ async function onArrivalClick(stop, li, arrival) {
   await waitForMapTransition(mapEl);
   maps[stop.id].invalidateSize();
 
-  const coords = await getShapeForPattern(arrival.pattern_id);
-  if (!coords || selected[stop.id]?.key !== key) return; // selection changed while loading
-  const poly = L.polyline(coords, { color: '#1a73e8', weight: 4, opacity: 0.85 }).addTo(maps[stop.id]);
-  selected[stop.id].polyline = poly;
-  const bounds = poly.getBounds().extend([stop.lat, stop.lon]);
-  maps[stop.id].fitBounds(bounds, { padding: [24, 24] });
+  // Fetch the route shape and the vehicle position at the same time and
+  // independently — Carris's /patterns and /shapes endpoints have their own
+  // instability separate from /vehicles (e.g. a contaminated shape_id makes
+  // /shapes 404), and a failure in one must not also hide the other.
+  const [coords] = await Promise.all([
+    getShapeForPattern(arrival.pattern_id),
+    vehicleKey ? updateVehicles(stop, [vehicleKey]) : Promise.resolve(),
+  ]);
+  if (selected[stop.id]?.key !== key) return; // selection changed while loading
 
-  if (vehicleKey) {
-    await updateVehicles(stop, [vehicleKey]);
-    // Now that the live vehicle marker (if any) is placed, widen the view
-    // so your stop and the bus's current position are both guaranteed to
-    // be in frame, not just the route shape.
-    const vehicleMark = vehicleMarkers[stop.id]?.[vehicleKey];
-    if (vehicleMark && selected[stop.id]?.key === key) {
-      const fullBounds = poly.getBounds().extend([stop.lat, stop.lon]).extend(vehicleMark.getLatLng());
-      maps[stop.id].fitBounds(fullBounds, { padding: [24, 24] });
-    }
+  let poly = null;
+  if (coords) {
+    poly = L.polyline(coords, { color: '#1a73e8', weight: 4, opacity: 0.85 }).addTo(maps[stop.id]);
+    selected[stop.id].polyline = poly;
   }
+
+  const vehicleMark = vehicleKey ? vehicleMarkers[stop.id]?.[vehicleKey] : null;
+  const bounds = poly
+    ? poly.getBounds().extend([stop.lat, stop.lon])
+    : L.latLngBounds([stop.lat, stop.lon], [stop.lat, stop.lon]);
+  if (vehicleMark) bounds.extend(vehicleMark.getLatLng());
+  maps[stop.id].fitBounds(bounds, { padding: [24, 24] });
 }
 
 let refreshing = false;
