@@ -479,7 +479,10 @@ async function getShapeForPattern(patternId) {
   const patRes = await fetch(`${API}/patterns/${cleanId}`);
   if (!patRes.ok) return null;
   const patData = await patRes.json();
-  const shapeId = stripBracketTag(patData[0]?.shape_id);
+  // Unlike pattern_id/vehicle id, shape_id's bracket-tag prefix (e.g.
+  // "[XS3H8]326") isn't contamination to strip — it's part of the real id in
+  // the /shapes collection; /shapes/326 404s but /shapes/[XS3H8]326 works.
+  const shapeId = patData[0]?.shape_id;
   if (!shapeId) return null;
   const shapeRes = await fetch(`${API}/shapes/${encodeURIComponent(shapeId)}`);
   if (!shapeRes.ok) return null;
