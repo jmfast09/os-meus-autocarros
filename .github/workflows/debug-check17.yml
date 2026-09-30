@@ -1,0 +1,35 @@
+name: Debug Metro tempoEspera endpoint
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Metro Lisboa's CA chain
+        run: |
+          curl -s --connect-timeout 10 --max-time 30 "http://crt.sectigo.com/SectigoPublicServerAuthenticationCAOVR36.crt" -o /tmp/intermediate.der
+          curl -s --connect-timeout 10 --max-time 30 "http://crt.sectigo.com/SectigoPublicServerAuthenticationRootR46.p7c" -o /tmp/root.p7c
+          openssl x509 -inform DER -in /tmp/intermediate.der -out /tmp/intermediate.pem
+          openssl pkcs7 -inform DER -in /tmp/root.p7c -print_certs -out /tmp/root.pem
+          cat /tmp/intermediate.pem /tmp/root.pem /etc/ssl/certs/ca-certificates.crt > /tmp/ca-bundle.pem
+      - name: Check tempoEspera for each tracked station with current token
+        run: |
+          date -u
+          TOKEN=$(jq -r '.access_token' metro-auth.json)
+          EXPIRES=$(jq -r '.expires_at' metro-auth.json)
+          NOW=$(date +%s)
+          echo "token=$TOKEN expires_at=$EXPIRES now=$NOW (valid_for=$((EXPIRES-NOW))s)"
+          for CODE in SS OR SA MP; do
+            echo "=== tempoEspera/Estacao/$CODE ==="
+            curl -s -w "\nHTTP %{http_code}\n" --connect-timeout 10 --max-time 30 --cacert /tmp/ca-bundle.pem \
+              -H "Authorization: Bearer $TOKEN" \
+              "https://api.metrolisboa.pt:8243/estadoServicoML/1.0.1/tempoEspera/Estacao/$CODE"
+            echo
+          done
