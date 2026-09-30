@@ -268,9 +268,24 @@ function escapeHtml(str) {
 // A raw "Failed to fetch" means nothing to a non-technical user; translate
 // the common case, leave anything else (like an HTTP status) as-is.
 function friendlyErrorMessage(err) {
+  if (err?.name === 'AbortError') return 'demorou demasiado tempo a responder';
   const msg = String(err?.message || err || '');
   if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) return 'sem ligação à internet';
   return msg;
+}
+
+// Browsers apply no timeout of their own to fetch() — a backend that hangs
+// (seen live on Metro Lisboa's tempoEspera for some stations) otherwise
+// leaves a request pending indefinitely, which stalls anything awaiting it.
+// Give every external call a hard ceiling instead.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const lastGoodArrivals = {};  // stop.id -> { upcoming, at }
@@ -669,10 +684,16 @@ async function refreshMetro() {
 
     const stationData = {};
     await Promise.all(METRO_STATION_CODES.map(async code => {
-      const res = await fetch(`${METRO_API}/tempoEspera/Estacao/${code}`, {
-        headers: { Authorization: `Bearer ${auth.access_token}` },
-      });
-      if (res.ok) stationData[code] = await res.json();
+      try {
+        const res = await fetchWithTimeout(`${METRO_API}/tempoEspera/Estacao/${code}`, {
+          headers: { Authorization: `Bearer ${auth.access_token}` },
+        });
+        if (res.ok) stationData[code] = await res.json();
+      } catch (e) {
+        // One station timing out/failing shouldn't blank the whole card —
+        // leave it out of stationData; its platforms render "sem dados"
+        // below while the others still show live data.
+      }
     }));
 
     listEl.innerHTML = METRO_PLATFORMS.map(p => {
@@ -800,9 +821,9 @@ async function checkCommute() {
     }
 
     const [orienteRes, saldanhaRes, busRes] = await Promise.all([
-      fetch(`${METRO_API}/tempoEspera/Estacao/OR`, { headers: { Authorization: `Bearer ${auth.access_token}` } }),
-      fetch(`${METRO_API}/tempoEspera/Estacao/SA`, { headers: { Authorization: `Bearer ${auth.access_token}` } }),
-      fetch(`${API}/arrivals/by_stop/${COMMUTE_BUS_STOP_ID}`),
+      fetchWithTimeout(`${METRO_API}/tempoEspera/Estacao/OR`, { headers: { Authorization: `Bearer ${auth.access_token}` } }),
+      fetchWithTimeout(`${METRO_API}/tempoEspera/Estacao/SA`, { headers: { Authorization: `Bearer ${auth.access_token}` } }),
+      fetchWithTimeout(`${API}/arrivals/by_stop/${COMMUTE_BUS_STOP_ID}`),
     ]);
     if (!orienteRes.ok || !saldanhaRes.ok) throw new Error('sem dados do Metro no Oriente/Saldanha');
     if (!busRes.ok) throw new Error(`HTTP ${busRes.status} nos autocarros`);
