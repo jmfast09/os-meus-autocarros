@@ -41,7 +41,12 @@ jobs:
           # emailing a failure notice) on what's usually just a blip.
           TOKEN=""
           for ATTEMPT in 1 2 3 4; do
-            RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 --cacert /tmp/ca-bundle.pem -X POST "https://api.metrolisboa.pt:8243/token" -u "$KEY:$SECRET" -d "grant_type=client_credentials")
+            # set -e means a non-zero exit anywhere aborts the whole script —
+            # including a timed-out curl inside this command substitution,
+            # which would otherwise kill the step on attempt 1 and skip every
+            # retry below. The "|| true" keeps that failure local so the loop
+            # actually gets to try again.
+            RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 --cacert /tmp/ca-bundle.pem -X POST "https://api.metrolisboa.pt:8243/token" -u "$KEY:$SECRET" -d "grant_type=client_credentials") || true
             TOKEN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
             EXPIRES_IN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('expires_in',0))" 2>/dev/null || echo 0)
             if [ -n "$TOKEN" ]; then
