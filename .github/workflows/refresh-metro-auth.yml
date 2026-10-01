@@ -68,6 +68,17 @@ jobs:
         run: |
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
+          # metro-auth.json is the only file this workflow ever touches, and
+          # there's nothing to merge about it — whichever token is newest
+          # should simply win. A rebase instead tries to reconcile two full
+          # rewrites of the same file as one history, conflicts every time
+          # two runs race (more likely now that the token step itself can
+          # take over a minute across retries), and — since this shell runs
+          # with -e by default — a conflicted rebase aborts the whole step
+          # instead of retrying. Reset-and-reapply sidesteps that: on a
+          # rejected push, drop straight to the latest origin/main and
+          # reapply our own (still valid) token file on top, no merge.
+          cp metro-auth.json /tmp/metro-auth-new.json
           for i in 1 2 3 4 5; do
             git add metro-auth.json
             if git diff --staged --quiet; then
@@ -79,7 +90,8 @@ jobs:
               echo "Pushed successfully"
               break
             fi
-            echo "Push rejected, retrying with rebase (attempt $i)..."
+            echo "Push rejected, retrying (attempt $i)..."
             git fetch origin main
-            git rebase origin/main
+            git reset --hard origin/main
+            cp /tmp/metro-auth-new.json metro-auth.json
           done
