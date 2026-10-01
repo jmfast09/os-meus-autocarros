@@ -34,11 +34,24 @@ jobs:
           SECRET: ${{ secrets.METRO_CONSUMER_SECRET }}
         run: |
           set -e
-          RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 --cacert /tmp/ca-bundle.pem -X POST "https://api.metrolisboa.pt:8243/token" -u "$KEY:$SECRET" -d "grant_type=client_credentials")
-          TOKEN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))")
-          EXPIRES_IN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('expires_in',0))")
+          # Metro Lisboa's /token endpoint times out transiently a good chunk
+          # of the time (observed ~30-40% of calls hitting the 30s ceiling)
+          # even when the credentials and the rest of their API are fine.
+          # Retry a few times before giving up, instead of failing (and
+          # emailing a failure notice) on what's usually just a blip.
+          TOKEN=""
+          for ATTEMPT in 1 2 3 4; do
+            RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 --cacert /tmp/ca-bundle.pem -X POST "https://api.metrolisboa.pt:8243/token" -u "$KEY:$SECRET" -d "grant_type=client_credentials")
+            TOKEN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
+            EXPIRES_IN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('expires_in',0))" 2>/dev/null || echo 0)
+            if [ -n "$TOKEN" ]; then
+              break
+            fi
+            echo "Attempt $ATTEMPT failed: $RESPONSE"
+            sleep 5
+          done
           if [ -z "$TOKEN" ]; then
-            echo "::error::Failed to obtain token: $RESPONSE"
+            echo "::error::Failed to obtain token after 4 attempts: $RESPONSE"
             exit 1
           fi
           NOW=$(date +%s)
