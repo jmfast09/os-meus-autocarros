@@ -480,6 +480,27 @@ function vehicleStatusLabel(status) {
   }
 }
 
+// /vehicles is the whole country's fleet at once (hundreds of KB — 338
+// vehicles / 273KB measured just now, more at peak hours), and both tracked
+// stops call updateVehicles independently on every 10s refresh tick. Without
+// sharing, that's the same multi-hundred-KB response downloaded twice back
+// to back for no reason. A short-lived shared in-flight fetch (window well
+// under the 10s refresh interval, just long enough to cover both stops'
+// near-simultaneous calls) collapses that back down to one request.
+let vehiclesFetchPromise = null;
+let vehiclesFetchedAt = 0;
+const VEHICLES_DEDUPE_MS = 3000;
+function fetchVehiclesShared() {
+  const now = Date.now();
+  if (!vehiclesFetchPromise || now - vehiclesFetchedAt > VEHICLES_DEDUPE_MS) {
+    vehiclesFetchedAt = now;
+    vehiclesFetchPromise = fetch(`${API}/vehicles`)
+      .then(res => (res.ok ? res.json() : null))
+      .catch(() => null);
+  }
+  return vehiclesFetchPromise;
+}
+
 async function updateVehicles(stop, vehicleIds) {
   const map = maps[stop.id];
   const marks = vehicleMarkers[stop.id];
@@ -490,9 +511,8 @@ async function updateVehicles(stop, vehicleIds) {
   });
   if (vehicleIds.length === 0) return;
   try {
-    const res = await fetch(`${API}/vehicles`);
-    if (!res.ok) return;
-    const vehicles = await res.json();
+    const vehicles = await fetchVehiclesShared();
+    if (!vehicles) return;
     // Arrivals reports a bare numeric vehicle_id (e.g. "1256"), but /vehicles'
     // own id has worn different wrappers over time: an "agency|" prefix
     // ("41|1256") and, currently, a bracketed internal tag with no pipe at
