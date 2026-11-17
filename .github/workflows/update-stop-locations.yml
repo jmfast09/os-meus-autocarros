@@ -1,0 +1,75 @@
+name: Update stop locations cache
+
+on:
+  # Stop locations barely ever change, so this only needs to run manually —
+  # when a new line starts serving one of the two tracked stops, or every
+  # once in a while just to be safe. No point scheduling it.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build a small stop-locations.json scoped to our tracked stops
+        run: |
+          set -e
+          # The only endpoint with stop coordinates returns ALL ~12.7k stops
+          # in the country at once (~6.8MB) — far too heavy to fetch from the
+          # browser just to plot a few dozen dots along one route. Instead,
+          # do that heavy fetch once here (this runner's own network, not the
+          # user's), narrow it down to just the stops that matter, and commit
+          # the tiny result so the app serves it as a static file instead.
+          curl -s --connect-timeout 10 --max-time 60 "https://api.carrismetropolitana.pt/v2/stops" -o /tmp/stops.json
+
+          TRACKED_STOPS='["120060","060462"]'
+
+          # Which patterns actually serve our two tracked stops right now.
+          echo "$TRACKED_STOPS" | jq -c '.[]' | while read -r SID; do
+            SID_CLEAN=$(echo "$SID" | tr -d '"')
+            jq -r --arg sid "$SID_CLEAN" '.[] | select(.id == $sid) | .pattern_ids[]' /tmp/stops.json
+          done | sort -u > /tmp/pattern_ids.txt
+          echo "patterns serving tracked stops: $(wc -l < /tmp/pattern_ids.txt)"
+
+          # Every stop_id that appears anywhere along any of those patterns.
+          > /tmp/all_stop_ids.txt
+          while read -r PID; do
+            curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/patterns/$PID" -o /tmp/pat_tmp.json
+            jq -r '.[0].path[]?.stop_id' /tmp/pat_tmp.json >> /tmp/all_stop_ids.txt
+          done < /tmp/pattern_ids.txt
+          sort -u /tmp/all_stop_ids.txt -o /tmp/all_stop_ids.txt
+          echo "distinct stops across those patterns: $(wc -l < /tmp/all_stop_ids.txt)"
+
+          jq -R -s -c 'split("\n") | map(select(length > 0))' /tmp/all_stop_ids.txt > /tmp/wanted_ids.json
+          jq --slurpfile ids /tmp/wanted_ids.json '
+            ($ids[0]) as $wanted |
+            [.[] | select(.id as $i | $wanted | index($i)) | {id, lat, lon, name: .long_name}]
+          ' /tmp/stops.json > stop-locations.json
+          echo "stop-locations.json: $(wc -c < stop-locations.json) bytes, $(jq length stop-locations.json) stops"
+
+      - name: Commit and push (retrying on conflicts)
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          cp stop-locations.json /tmp/stop-locations-new.json
+          for i in 1 2 3 4 5; do
+            git add stop-locations.json
+            if git diff --staged --quiet; then
+              echo "No changes to commit"
+              break
+            fi
+            git commit -m "Atualiza cache de localizacao das paragens"
+            if git push; then
+              echo "Pushed successfully"
+              break
+            fi
+            echo "Push rejected, retrying (attempt $i)..."
+            git fetch origin main
+            git reset --hard origin/main
+            cp /tmp/stop-locations-new.json stop-locations.json
+          done
