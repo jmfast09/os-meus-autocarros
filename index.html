@@ -343,7 +343,7 @@ function renderArrivalsList(listEl, stop, upcoming) {
     li.tabIndex = 0;
     li.setAttribute('role', 'button');
     li.innerHTML = `
-      <div class="badge">${escapeHtml(a.line_id)}</div>
+      <div class="badge">${escapeHtml(stripBracketTag(a.line_id))}</div>
       <div class="dest">${escapeHtml(a.headsign)}<span class="time">previsto ${fmtTime(isLive ? a.estimated_arrival : a.scheduled_arrival)}</span></div>
       <div class="eta">${minsLabel}${isLive ? '<span class="live">● tempo real</span>' : '<span class="sched">horário</span>'}</div>`;
     li.addEventListener('click', () => onArrivalClick(stop, li, a));
@@ -495,7 +495,7 @@ async function updateVehicles(stop, vehicleIds) {
         iconAnchor: [0, 0],
         html: `
           <div style="position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.6);"></div>
-          <div style="position:absolute;left:9px;top:-10px;${style}">🚌 ${v.line_id || ''}</div>`,
+          <div style="position:absolute;left:9px;top:-10px;${style}">🚌 ${stripBracketTag(v.line_id)}</div>`,
       }));
     });
   } catch (e) { /* silent: vehicle layer is best-effort */ }
