@@ -61,6 +61,8 @@
   }
   #refreshBtn.spinning { animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .stall-ring { animation: stallPulse 1.6s ease-in-out infinite; }
+  @keyframes stallPulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
   main { padding: 12px; padding-bottom: 32px; max-width: 520px; margin: 0 auto; }
   .card {
     background: var(--card);
@@ -258,6 +260,8 @@ const MAP_COLORS = {
   selectedBus: '#009e73', // the vehicle you tapped (Okabe-Ito "bluish green")
   otherBus: '#cc7a00',    // other tracked vehicles (Okabe-Ito "orange", toned down slightly)
   routeStop: '#737378',   // small dots along the route — neutral, meant to recede
+  stalled: '#b8860b',     // same amber already used elsewhere for "estimated/uncertain" — reused
+                           // here as a status ring so it doesn't compete with the role colors above
 };
 const maps = {};
 const vehicleMarkers = {};
@@ -480,6 +484,19 @@ function vehicleStatusLabel(status) {
   }
 }
 
+// A vehicle marked IN_TRANSIT_TO with ~zero speed could just be waiting at a
+// red light — that resolves fast. A live sample of ~330 vehicles showed
+// normal episodes like that clearing within 79s, while genuine traffic
+// stalls kept running past 150s with no per-road baseline needed to tell
+// them apart. 90s sits safely between the two, so cross it and we call it
+// stuck in traffic rather than "em andamento".
+const vehicleStallSince = {};
+const STALL_THRESHOLD_MS = 90 * 1000;
+function stallDurationLabel(ms) {
+  const mins = Math.floor(ms / 60000);
+  return mins >= 1 ? `parado no trânsito há ${mins} min` : 'parado no trânsito';
+}
+
 // /vehicles is the whole country's fleet at once (hundreds of KB — 338
 // vehicles / 273KB measured just now, more at peak hours), and both tracked
 // stops call updateVehicles independently on every 10s refresh tick. Without
@@ -507,7 +524,7 @@ async function updateVehicles(stop, vehicleIds) {
   const highlightId = selected[stop.id]?.vehicleKey || null;
   // remove markers no longer relevant
   Object.keys(marks).forEach(id => {
-    if (!vehicleIds.includes(id)) { map.removeLayer(marks[id]); delete marks[id]; }
+    if (!vehicleIds.includes(id)) { map.removeLayer(marks[id]); delete marks[id]; delete vehicleStallSince[id]; }
   });
   if (vehicleIds.length === 0) return;
   try {
@@ -534,6 +551,14 @@ async function updateVehicles(stop, vehicleIds) {
         : byId[id];
       if (!v || !v.lat) return;
       const isHighlighted = id === highlightId;
+      const isCandidateStall = v.current_status === 'IN_TRANSIT_TO' && (v.speed ?? 0) <= 1;
+      if (isCandidateStall) {
+        if (!(id in vehicleStallSince)) vehicleStallSince[id] = Date.now();
+      } else {
+        delete vehicleStallSince[id];
+      }
+      const stallMs = isCandidateStall ? Date.now() - vehicleStallSince[id] : 0;
+      const isStalled = stallMs >= STALL_THRESHOLD_MS;
       if (marks[id]) {
         marks[id].setLatLng([v.lat, v.lon]);
       } else {
@@ -551,7 +576,13 @@ async function updateVehicles(stop, vehicleIds) {
       // on a north-up map), when Carris reports one; current_status adds a
       // short "parado"/"em andamento"/"a chegar" next to the line number.
       const bearing = typeof v.bearing === 'number' ? v.bearing : null;
-      const statusLabel = vehicleStatusLabel(v.current_status);
+      const statusLabel = isStalled ? stallDurationLabel(stallMs) : vehicleStatusLabel(v.current_status);
+      // The ring is a separate visual channel from the dot's own color: the
+      // dot still says "who" (selected vs. other bus), the amber dashed ring
+      // says "state" (stuck), so the two never compete for the same color.
+      const stallRingHtml = isStalled
+        ? `<div class="stall-ring" style="position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;border:2px dashed ${MAP_COLORS.stalled};box-sizing:border-box;"></div>`
+        : '';
       // Always white with a dark outline-ish shadow, regardless of dotColor —
       // the selected vehicle's dot is the same blue as the route line, so an
       // arrow colored to match it used to disappear right on top of that line.
@@ -564,6 +595,7 @@ async function updateVehicles(stop, vehicleIds) {
         iconSize: [0, 0],
         iconAnchor: [0, 0],
         html: `
+          ${stallRingHtml}
           <div style="position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.6);"></div>${arrowHtml}
           <div style="position:absolute;left:9px;top:-10px;${style}">🚌 ${stripBracketTag(v.line_id)}${statusLabel ? ` · ${statusLabel}` : ''}</div>`,
       }));
