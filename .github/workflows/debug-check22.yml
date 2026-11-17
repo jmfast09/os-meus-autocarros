@@ -1,0 +1,24 @@
+name: Debug vehicle GPS update frequency
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Poll /vehicles repeatedly and track timestamp changes for line 1724
+        run: |
+          date -u
+          for i in $(seq 1 15); do
+            T0=$(date +%s)
+            curl -s --connect-timeout 10 --max-time 15 "https://api.carrismetropolitana.pt/v2/vehicles" -o /tmp/veh_$i.json
+            echo "--- poll $i at $(date -u +%H:%M:%S) ---"
+            jq '[.[] | select(.line_id == "1724")] | map({id, timestamp, lat, lon, speed, current_status})' /tmp/veh_$i.json
+            sleep 4
+          done
