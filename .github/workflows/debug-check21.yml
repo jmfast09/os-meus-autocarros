@@ -1,0 +1,45 @@
+name: Debug stop locations scope
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Figure out which patterns/stops are actually relevant
+        run: |
+          date -u
+          echo "=== fetch bulk /stops (6.8MB, one-time in this Action's own network) ==="
+          curl -s --connect-timeout 10 --max-time 60 "https://api.carrismetropolitana.pt/v2/stops" -o /tmp/stops.json
+          jq 'length' /tmp/stops.json
+
+          echo "=== our 2 tracked stops: which pattern_ids/route_ids serve them? ==="
+          jq '[.[] | select(.id == "120060" or .id == "060462")] | map({id, pattern_ids, route_ids, line_ids})' /tmp/stops.json
+
+          echo "=== union of all stop_ids across those patterns ==="
+          jq -r '[.[] | select(.id == "120060" or .id == "060462") | .pattern_ids[]] | unique[]' /tmp/stops.json > /tmp/pattern_ids.txt
+          cat /tmp/pattern_ids.txt
+          echo "pattern count: $(wc -l < /tmp/pattern_ids.txt)"
+
+          > /tmp/all_stop_ids.txt
+          while read -r PID; do
+            curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/patterns/$PID" -o /tmp/pat_tmp.json
+            jq -r '.[0].path[]?.stop_id' /tmp/pat_tmp.json >> /tmp/all_stop_ids.txt
+          done < /tmp/pattern_ids.txt
+          sort -u /tmp/all_stop_ids.txt -o /tmp/all_stop_ids.txt
+          echo "total distinct stop_ids across all those patterns: $(wc -l < /tmp/all_stop_ids.txt)"
+
+          echo "=== estimate reduced file size (id+lat+lon+long_name only) ==="
+          jq --slurpfile ids <(jq -R -s -c 'split("\n") | map(select(length>0))' /tmp/all_stop_ids.txt) '
+            ($ids[0]) as $wanted |
+            [.[] | select(.id as $i | $wanted | index($i)) | {id, lat, lon, long_name}]
+          ' /tmp/stops.json > /tmp/reduced.json
+          jq 'length' /tmp/reduced.json
+          wc -c /tmp/reduced.json
+          jq '.[0:3]' /tmp/reduced.json
