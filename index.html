@@ -454,6 +454,17 @@ function renderScheduledFallback(listEl, items) {
   });
 }
 
+// current_status comes straight from GTFS-realtime's enum; translate the
+// handful of values Carris actually sends into short PT labels.
+function vehicleStatusLabel(status) {
+  switch (status) {
+    case 'STOPPED_AT': return 'parado';
+    case 'IN_TRANSIT_TO': return 'em andamento';
+    case 'INCOMING_AT': return 'a chegar';
+    default: return null;
+  }
+}
+
 async function updateVehicles(stop, vehicleIds) {
   const map = maps[stop.id];
   const marks = vehicleMarkers[stop.id];
@@ -500,13 +511,23 @@ async function updateVehicles(stop, vehicleIds) {
       // The label badge alone made it hard to tell exactly where the vehicle
       // is under it. Anchor a small dot precisely on the coordinate instead,
       // and float the label off to the side so it doesn't cover that point.
+      // A rotated arrow above the dot shows heading (bearing, degrees
+      // clockwise from north — same convention as rotating a div clockwise
+      // on a north-up map), when Carris reports one; current_status adds a
+      // short "parado"/"em andamento"/"a chegar" next to the line number.
+      const bearing = typeof v.bearing === 'number' ? v.bearing : null;
+      const statusLabel = vehicleStatusLabel(v.current_status);
+      const arrowHtml = bearing != null ? `
+          <div style="position:absolute;left:0;top:0;transform-origin:0 0;transform:rotate(${bearing}deg);">
+            <div style="position:absolute;left:-6px;top:-17px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:9px solid ${dotColor};filter:drop-shadow(0 1px 1px rgba(0,0,0,0.5));"></div>
+          </div>` : '';
       marks[id].setIcon(L.divIcon({
         className: '',
         iconSize: [0, 0],
         iconAnchor: [0, 0],
         html: `
-          <div style="position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.6);"></div>
-          <div style="position:absolute;left:9px;top:-10px;${style}">🚌 ${stripBracketTag(v.line_id)}</div>`,
+          <div style="position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:${dotColor};border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.6);"></div>${arrowHtml}
+          <div style="position:absolute;left:9px;top:-10px;${style}">🚌 ${stripBracketTag(v.line_id)}${statusLabel ? ` · ${statusLabel}` : ''}</div>`,
       }));
     });
   } catch (e) { /* silent: vehicle layer is best-effort */ }
