@@ -31,17 +31,12 @@ jobs:
           jq 'length' /tmp/stops.json 2>&1 || cat /tmp/stops.json | head -c 300
           jq '.[0]' /tmp/stops.json 2>&1
           echo "=== look up the 24 stop_ids of 1724_0_1 by filtering the bulk /stops response ==="
-          jq -r '.[0].path[].stop_id' /tmp/pat.json | sort -u > /tmp/wanted_ids.txt
-          python3 -c "
-import json
-wanted = set(open('/tmp/wanted_ids.txt').read().split())
-stops = json.load(open('/tmp/stops.json'))
-by_id = {s['id']: s for s in stops}
-found = [by_id[i] for i in wanted if i in by_id]
-print(f'wanted={len(wanted)} found={len(found)}')
-for s in found[:3]:
-    print({'id': s['id'], 'lat': s['lat'], 'lon': s['lon'], 'long_name': s['long_name']})
-"
+          jq '[.[0].path[].stop_id]' /tmp/pat.json > /tmp/wanted_ids.json
+          jq --slurpfile wanted /tmp/wanted_ids.json '
+            ($wanted[0]) as $ids |
+            { wanted: ($ids | length), found: ([.[] | select(.id as $i | $ids | index($i))] | length),
+              sample: ([.[] | select(.id as $i | $ids | index($i))] | .[0:3] | map({id, lat, lon, long_name})) }
+          ' /tmp/stops.json
           echo "=== does /stops support an ids query filter? (try a couple of common param shapes) ==="
           curl -s -o /dev/null -w "ids= param: HTTP %{http_code}\n" --connect-timeout 10 --max-time 15 "https://api.carrismetropolitana.pt/v2/stops?ids=120177,120353"
           curl -s -o /dev/null -w "id= param: HTTP %{http_code}\n" --connect-timeout 10 --max-time 15 "https://api.carrismetropolitana.pt/v2/stops?id=120177"
