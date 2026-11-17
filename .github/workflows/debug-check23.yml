@@ -17,8 +17,8 @@ jobs:
           date -u
           > /tmp/all_dates.txt
           for PID in 1724_0_1 1724_0_2 1724_1_1 1724_1_2 1724_2_3 1724_3_1 1724_3_2; do
-            curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/patterns/$PID" -o /tmp/pat.json
-            jq -r '.[0].trips[]?.valid_on[]?' /tmp/pat.json >> /tmp/all_dates.txt
+            curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/patterns/$PID" -o /tmp/pat.json || true
+            jq -r '.[0].trips[]?.valid_on[]?' /tmp/pat.json >> /tmp/all_dates.txt || true
           done
           echo "distinct dates found: $(sort -u /tmp/all_dates.txt | wc -l)"
           echo "earliest date: $(sort -u /tmp/all_dates.txt | head -1)"
