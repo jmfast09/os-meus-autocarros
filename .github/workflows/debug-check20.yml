@@ -1,0 +1,32 @@
+name: Debug stop locations in patterns
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check /patterns path structure + /stops endpoint
+        run: |
+          date -u
+          echo "=== /patterns/1724_0_1 full path entry sample ==="
+          curl -s --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/patterns/1724_0_1" -o /tmp/pat.json
+          jq '.[0].path[0:3]' /tmp/pat.json
+          echo "=== path length ==="
+          jq '.[0].path | length' /tmp/pat.json
+          echo "=== does path have lat/lon directly? ==="
+          jq '.[0].path[0] | keys' /tmp/pat.json
+          echo "=== /stops/060462 (single stop lookup) ==="
+          curl -s -w "\nHTTP %{http_code}\n" --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/stops/060462" -o /tmp/stop.json
+          cat /tmp/stop.json
+          echo
+          echo "=== /stops (bulk) sample + count, if it exists ==="
+          curl -s -w "\nHTTP %{http_code}\n" --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/stops" -o /tmp/stops.json
+          jq 'length' /tmp/stops.json 2>&1 || cat /tmp/stops.json | head -c 300
+          jq '.[0]' /tmp/stops.json 2>&1
