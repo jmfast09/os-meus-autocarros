@@ -536,23 +536,49 @@ async function updateVehicles(stop, vehicleIds) {
   } catch (e) { /* silent: vehicle layer is best-effort */ }
 }
 
+// Returns both the route's shape (for the polyline) and its ordered list of
+// stop_ids (for the little per-stop dots) — both come off the same
+// /patterns response, so there's no reason to fetch it twice. A failure
+// fetching the shape specifically (e.g. a contaminated shape_id) still
+// leaves path usable, so the dots can show up even without the line.
 async function getShapeForPattern(patternId) {
   const cleanId = stripBracketTag(patternId);
   if (shapeCache[cleanId]) return shapeCache[cleanId];
   const patRes = await fetch(`${API}/patterns/${cleanId}`);
   if (!patRes.ok) return null;
   const patData = await patRes.json();
+  const path = patData[0]?.path?.map(p => p.stop_id).filter(Boolean) || null;
   // Unlike pattern_id/vehicle id, shape_id's bracket-tag prefix (e.g.
   // "[XS3H8]326") isn't contamination to strip — it's part of the real id in
   // the /shapes collection; /shapes/326 404s but /shapes/[XS3H8]326 works.
   const shapeId = patData[0]?.shape_id;
-  if (!shapeId) return null;
-  const shapeRes = await fetch(`${API}/shapes/${encodeURIComponent(shapeId)}`);
-  if (!shapeRes.ok) return null;
-  const shapeData = await shapeRes.json();
-  const coords = shapeData.geojson?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]);
-  if (coords) shapeCache[cleanId] = coords;
-  return coords || null;
+  let coords = null;
+  if (shapeId) {
+    const shapeRes = await fetch(`${API}/shapes/${encodeURIComponent(shapeId)}`);
+    if (shapeRes.ok) {
+      const shapeData = await shapeRes.json();
+      coords = shapeData.geojson?.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) || null;
+    }
+  }
+  const result = { coords, path };
+  shapeCache[cleanId] = result;
+  return result;
+}
+
+// Lazy, cached fetch of the small static stop-locations.json (~25KB, just
+// the stops relevant to lines serving our two tracked stops) — see
+// update-stop-locations.yml for how it's generated. Avoids the browser ever
+// having to pull Carris's full nationwide /stops dataset (~6.8MB) just to
+// plot a few dozen dots along one route.
+let stopLocationsPromise = null;
+function loadStopLocations() {
+  if (!stopLocationsPromise) {
+    stopLocationsPromise = fetch('./stop-locations.json')
+      .then(res => res.ok ? res.json() : [])
+      .then(list => Object.fromEntries(list.map(s => [s.id, s])))
+      .catch(() => ({}));
+  }
+  return stopLocationsPromise;
 }
 
 // Calling Leaflet's invalidateSize() while the .map container's CSS height
@@ -575,6 +601,7 @@ function clearSelection(stop) {
   const sel = selected[stop.id];
   if (!sel) return;
   if (sel.polyline) maps[stop.id].removeLayer(sel.polyline);
+  (sel.stopMarkers || []).forEach(m => maps[stop.id].removeLayer(m));
   delete selected[stop.id];
   document.querySelectorAll(`#arrivals-${stop.id} li`).forEach(el => el.classList.remove('selected'));
   const mapEl = document.getElementById(`map-${stop.id}`);
@@ -605,16 +632,33 @@ async function onArrivalClick(stop, li, arrival) {
   // independently — Carris's /patterns and /shapes endpoints have their own
   // instability separate from /vehicles (e.g. a contaminated shape_id makes
   // /shapes 404), and a failure in one must not also hide the other.
-  const [coords] = await Promise.all([
+  const [pattern] = await Promise.all([
     getShapeForPattern(arrival.pattern_id),
     vehicleKey ? updateVehicles(stop, [vehicleKey]) : Promise.resolve(),
   ]);
   if (selected[stop.id]?.key !== key) return; // selection changed while loading
 
   let poly = null;
-  if (coords) {
-    poly = L.polyline(coords, { color: '#1a73e8', weight: 4, opacity: 0.85 }).addTo(maps[stop.id]);
+  if (pattern?.coords) {
+    poly = L.polyline(pattern.coords, { color: '#1a73e8', weight: 4, opacity: 0.85 }).addTo(maps[stop.id]);
     selected[stop.id].polyline = poly;
+  }
+
+  // A small dot at every stop along the route, not just the shape of the
+  // road it follows, so it's clear exactly where the bus actually stops.
+  if (pattern?.path?.length) {
+    const locations = await loadStopLocations();
+    const stopMarkers = pattern.path
+      .map(id => locations[id])
+      .filter(Boolean)
+      .map(s => L.circleMarker([s.lat, s.lon], { radius: 3, weight: 1, color: '#ffffff', fillColor: '#1a73e8', fillOpacity: 0.9 })
+        .bindTooltip(escapeHtml(s.name), { direction: 'top', offset: [0, -4] })
+        .addTo(maps[stop.id]));
+    if (selected[stop.id]?.key === key) {
+      selected[stop.id].stopMarkers = stopMarkers;
+    } else {
+      stopMarkers.forEach(m => maps[stop.id].removeLayer(m)); // selection changed while loading
+    }
   }
 
   const vehicleMark = vehicleKey ? vehicleMarkers[stop.id]?.[vehicleKey] : null;
