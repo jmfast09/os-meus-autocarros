@@ -100,7 +100,7 @@
     cursor: pointer;
   }
   ul.arrivals li:active { background: var(--line); }
-  ul.arrivals li.selected { background: rgba(26,115,232,0.12); }
+  ul.arrivals li.selected { background: rgba(0,158,115,0.12); }
   .badge {
     flex: 0 0 auto;
     min-width: 40px; text-align: center;
@@ -244,6 +244,21 @@ const STOPS = [
 ];
 const API = 'https://api.carrismetropolitana.pt/v2';
 const MAX_SHOW = 5;
+
+// Map marker palette. Previously the route line, the "your stop" pin, the
+// selected vehicle and the new per-stop dots were all variations of the
+// same blue — impossible to tell apart at a glance. Each role now gets
+// exactly one color, drawn from the Okabe-Ito categorical set (Okabe & Ito,
+// 2008) — the standard reference for colors that stay clearly distinct from
+// each other without looking garish, originally designed for
+// colorblind-safe scientific figures.
+const MAP_COLORS = {
+  yourStop: '#c61d23',    // the stop you're tracking — same red as the app's own brand/header
+  route: '#0072b2',       // route polyline (Okabe-Ito "blue")
+  selectedBus: '#009e73', // the vehicle you tapped (Okabe-Ito "bluish green")
+  otherBus: '#cc7a00',    // other tracked vehicles (Okabe-Ito "orange", toned down slightly)
+  routeStop: '#737378',   // small dots along the route — neutral, meant to recede
+};
 const maps = {};
 const vehicleMarkers = {};
 const selected = {};       // stopId -> { key, patternId, vehicleKey, polyline }
@@ -265,7 +280,7 @@ function buildSkeleton() {
     const map = L.map(`map-${s.id}`, { zoomControl: false, attributionControl: false, dragging: true, scrollWheelZoom: false });
     map.setView([s.lat, s.lon], 15);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-    const stopIcon = L.divIcon({ className: '', html: '<div style="width:14px;height:14px;border-radius:50%;background:#1a73e8;border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5)"></div>', iconSize: [14,14] });
+    const stopIcon = L.divIcon({ className: '', html: `<div style="width:14px;height:14px;border-radius:50%;background:${MAP_COLORS.yourStop};border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5)"></div>`, iconSize: [14,14] });
     L.marker([s.lat, s.lon], { icon: stopIcon }).addTo(map);
     maps[s.id] = map;
     vehicleMarkers[s.id] = {};
@@ -504,10 +519,10 @@ async function updateVehicles(stop, vehicleIds) {
       } else {
         marks[id] = L.marker([v.lat, v.lon]).addTo(map);
       }
-      const dotColor = isHighlighted ? '#1a73e8' : '#c61d23';
+      const dotColor = isHighlighted ? MAP_COLORS.selectedBus : MAP_COLORS.otherBus;
       const style = isHighlighted
-        ? 'background:#1a73e8;color:white;font-size:11px;font-weight:700;padding:3px 7px;border-radius:7px;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);white-space:nowrap;'
-        : 'background:#c61d23;color:white;font-size:10px;font-weight:700;padding:2px 5px;border-radius:6px;border:1px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5);white-space:nowrap;';
+        ? `background:${dotColor};color:white;font-size:11px;font-weight:700;padding:3px 7px;border-radius:7px;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);white-space:nowrap;`
+        : `background:${dotColor};color:white;font-size:10px;font-weight:700;padding:2px 5px;border-radius:6px;border:1px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5);white-space:nowrap;`;
       // The label badge alone made it hard to tell exactly where the vehicle
       // is under it. Anchor a small dot precisely on the coordinate instead,
       // and float the label off to the side so it doesn't cover that point.
@@ -640,7 +655,7 @@ async function onArrivalClick(stop, li, arrival) {
 
   let poly = null;
   if (pattern?.coords) {
-    poly = L.polyline(pattern.coords, { color: '#1a73e8', weight: 4, opacity: 0.85 }).addTo(maps[stop.id]);
+    poly = L.polyline(pattern.coords, { color: MAP_COLORS.route, weight: 4, opacity: 0.85 }).addTo(maps[stop.id]);
     selected[stop.id].polyline = poly;
   }
 
@@ -651,7 +666,7 @@ async function onArrivalClick(stop, li, arrival) {
     const stopMarkers = pattern.path
       .map(id => locations[id])
       .filter(Boolean)
-      .map(s => L.circleMarker([s.lat, s.lon], { radius: 3, weight: 1, color: '#ffffff', fillColor: '#1a73e8', fillOpacity: 0.9 })
+      .map(s => L.circleMarker([s.lat, s.lon], { radius: 3, weight: 1, color: '#ffffff', fillColor: MAP_COLORS.routeStop, fillOpacity: 0.9 })
         .bindTooltip(escapeHtml(s.name), { direction: 'top', offset: [0, -4] })
         .addTo(maps[stop.id]));
     if (selected[stop.id]?.key === key) {
