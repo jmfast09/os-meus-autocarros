@@ -1,0 +1,90 @@
+name: Debug traffic-stall detection experiment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Poll /vehicles repeatedly, log speed/status history
+        run: |
+          date -u
+          mkdir -p /tmp/polls
+          for i in $(seq -w 1 20); do
+            curl -s --connect-timeout 10 --max-time 15 "https://api.carrismetropolitana.pt/v2/vehicles" -o /tmp/polls/poll_$i.json || true
+            echo "poll $i done at $(date -u +%H:%M:%S), $(jq 'length' /tmp/polls/poll_$i.json 2>/dev/null || echo '?') vehicles"
+            sleep 8
+          done
+
+      - name: Analyze speed/status history for stall-vs-traffic-light signal
+        run: |
+          python3 << 'PYEOF'
+          import json, glob
+
+          polls = []
+          for f in sorted(glob.glob('/tmp/polls/poll_*.json')):
+              try:
+                  polls.append(json.load(open(f)))
+              except Exception:
+                  polls.append([])
+
+          # Build per-vehicle time series: [(poll_index, timestamp, speed, status, stop_id), ...]
+          series = {}
+          for idx, poll in enumerate(polls):
+              for v in poll:
+                  vid = v.get('id')
+                  if not vid:
+                      continue
+                  series.setdefault(vid, []).append({
+                      'poll': idx,
+                      'timestamp': v.get('timestamp'),
+                      'speed': v.get('speed'),
+                      'status': v.get('current_status'),
+                      'stop_id': v.get('stop_id'),
+                  })
+
+          print(f"Tracked {len(series)} distinct vehicle ids across {len(polls)} polls")
+
+          # For each vehicle, find runs of consecutive polls where status == IN_TRANSIT_TO
+          # and speed is near zero (<=1 km/h) using DISTINCT timestamps (since the same
+          # GPS fix can repeat across polls when the vehicle hasn't reported again yet).
+          stall_runs = []
+          for vid, points in series.items():
+              # Collapse consecutive duplicate timestamps into one sample (the vehicle's
+              # own actual position report), keeping only distinct telemetry.
+              distinct = []
+              for p in points:
+                  if not distinct or distinct[-1]['timestamp'] != p['timestamp']:
+                      distinct.append(p)
+              # Walk distinct samples looking for consecutive IN_TRANSIT_TO + speed<=1.
+              run_start = None
+              for i, p in enumerate(distinct):
+                  is_stall = p['status'] == 'IN_TRANSIT_TO' and (p['speed'] or 0) <= 1
+                  if is_stall and run_start is None:
+                      run_start = p['timestamp']
+                      run_vid = vid
+                  if not is_stall and run_start is not None:
+                      run_end = distinct[i-1]['timestamp']
+                      if run_end and run_start and run_end > run_start:
+                          stall_runs.append({'id': vid, 'duration_s': run_end - run_start, 'samples': i})
+                      run_start = None
+              if run_start is not None and distinct:
+                  run_end = distinct[-1]['timestamp']
+                  if run_end and run_end > run_start:
+                      stall_runs.append({'id': vid, 'duration_s': run_end - run_start, 'ongoing': True})
+
+          print(f"\nFound {len(stall_runs)} distinct zero-speed-while-in-transit episodes:")
+          for r in sorted(stall_runs, key=lambda r: -r['duration_s']):
+              print(r)
+
+          # Also: how many vehicles had ANY telemetry update at all (sanity check that
+          # the dedupe-by-timestamp logic actually has real transitions to look at).
+          multi_sample_vehicles = sum(1 for points in series.values() if len({p['timestamp'] for p in points}) > 1)
+          print(f"\nVehicles with more than 1 distinct timestamp observed: {multi_sample_vehicles} / {len(series)}")
+          PYEOF
