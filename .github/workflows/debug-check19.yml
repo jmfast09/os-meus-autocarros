@@ -28,7 +28,8 @@ jobs:
               with_estimated: ([$all[] | select(.estimated_arrival != null)] | length),
               with_vehicle_id: ([$all[] | select(.vehicle_id != null)] | length),
               with_trip_id: ([$all[] | select(.trip_id != null)] | length),
-              contaminated_pattern_id: ([$all[] | select(.pattern_id | test("^\\["))] | length) }
+              contaminated_pattern_id: ([$all[] | select(.pattern_id | test("^\\["))] | length),
+              contaminated_line_id: ([$all[] | select(.line_id | test("^\\["))] | length) }
           ' /tmp/a1.json /tmp/a2.json
           echo "=== vehicles endpoint (sample for line 1724) ==="
           curl -s -w "\nHTTP %{http_code} in %{time_total}s\n" --connect-timeout 10 --max-time 30 "https://api.carrismetropolitana.pt/v2/vehicles" -o /tmp/veh.json
