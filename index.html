@@ -160,10 +160,23 @@
   #commuteResult .headline.warn { color: var(--red); }
   #commuteResult .breakdown { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.7; }
 
-  .besttime-item { padding: 10px 0; border-top: 1px solid var(--line); }
+  .besttime-item {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 12px 0; border-top: 1px solid var(--line);
+  }
   .besttime-item:first-child { border-top: none; }
-  .besttime-item .leave { font-size: 15px; font-weight: 700; }
-  .besttime-item .sub { margin-top: 2px; }
+  .besttime-item .leave-label { font-size: 11px; color: var(--muted); }
+  .besttime-item .leave-time { font-size: 17px; font-weight: 700; margin-top: 1px; }
+  .besttime-item .bus-col { text-align: right; }
+  .besttime-item .bus-time { font-size: 24px; font-weight: 800; line-height: 1.1; }
+  .besttime-item .bus-label { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .besttime-item .wait-chip {
+    display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 700;
+    padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+  }
+  .besttime-item .wait-chip.short { background: rgba(46,158,76,0.15); color: var(--green); }
+  .besttime-item .wait-chip.medium { background: rgba(184,134,11,0.15); color: var(--amber); }
+  .besttime-item .wait-chip.long { background: rgba(198,29,35,0.15); color: var(--red); }
 </style>
 </head>
 <body>
@@ -1002,10 +1015,18 @@ async function checkBestLeaveTimes() {
       const leaveClock = commuteClockLabel(g.leaveOffset, startMs);
       const busClock = commuteClockLabel(g.bus.sortUnix - now, startMs);
       const waitMin = Math.max(0, Math.round((g.bus.sortUnix - g.arriveUnix) / 60));
+      const waitClass = waitMin <= 3 ? 'short' : waitMin <= 6 ? 'medium' : 'long';
       return `
         <div class="besttime-item">
-          <div class="leave">Sai até às ${leaveClock}</div>
-          <div class="sub">para apanhar o 1724 das ${busClock}${g.bus.estimated ? ' (estimado)' : ''} — esperas ~${waitMin} min na paragem</div>
+          <div class="leave-col">
+            <div class="leave-label">Sai até às</div>
+            <div class="leave-time">${leaveClock}</div>
+          </div>
+          <div class="bus-col">
+            <div class="bus-time">${busClock}</div>
+            <div class="bus-label">1724${g.bus.estimated ? ' · estimado' : ''}</div>
+            <div class="wait-chip ${waitClass}">espera ~${waitMin} min</div>
+          </div>
         </div>`;
     }).join('');
   } catch (err) {
