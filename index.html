@@ -542,7 +542,18 @@ async function updateVehicles(stop, vehicleIds) {
       const bare = stripBracketTag(v.id).split('|').pop();
       if (bare && !(bare in byId)) byId[bare] = v;
     });
-    vehicleIds.forEach(id => {
+    // Two different arrivals can resolve to the same physical vehicle — one
+    // with its own vehicle_id, another on a different pattern that fell back
+    // to "whichever vehicle is running that direction" and happens to land
+    // on the same bus. Left unchecked that draws two overlapping markers for
+    // one vehicle. Process the selected arrival's key first so it wins the
+    // tie, then skip (and clean up) any later key that resolves to a vehicle
+    // already claimed.
+    const orderedIds = highlightId && vehicleIds.includes(highlightId)
+      ? [highlightId, ...vehicleIds.filter(id => id !== highlightId)]
+      : vehicleIds;
+    const claimedVehicleIds = new Set();
+    orderedIds.forEach(id => {
       // "pattern:<id>" keys are the vehicle_id-less fallback: pick whichever
       // vehicle is currently running that direction (best-effort — with more
       // than one bus on the same pattern this can't tell them apart).
@@ -550,6 +561,12 @@ async function updateVehicles(stop, vehicleIds) {
         ? vehicles.find(veh => stripBracketTag(veh.pattern_id) === id.slice('pattern:'.length))
         : byId[id];
       if (!v || !v.lat) return;
+      const realId = stripBracketTag(v.id);
+      if (claimedVehicleIds.has(realId) && id !== highlightId) {
+        if (marks[id]) { map.removeLayer(marks[id]); delete marks[id]; delete vehicleStallSince[id]; }
+        return;
+      }
+      claimedVehicleIds.add(realId);
       const isHighlighted = id === highlightId;
       const isCandidateStall = v.current_status === 'IN_TRANSIT_TO' && (v.speed ?? 0) <= 1;
       if (isCandidateStall) {
