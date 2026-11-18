@@ -987,16 +987,24 @@ function commuteArrivalAtStop(leaveOffset, orienteEntry, saldanhaEntry) {
   return { atOriente, boardOriente, boardSaldanha, atBusStop };
 }
 
+// The P3 stop sits on both directions of the 1724's loop: live data for it
+// mixes in departures headsigned "Marquês Pombal (Metro)", which share this
+// same physical stop but run the opposite way and never get you home — only
+// "Linda-a-velha" is the direction actually worth timing a departure around.
+// (Checked live: line_id alone is useless here, every entry says "1724"
+// regardless of direction — the headsign is the only reliable signal.)
+function isCommuteBusHeadsign(headsign) {
+  return (headsign || '').toLowerCase().includes('linda');
+}
+
 // Shared by checkCommute and checkBestLeaveTimes: the live 1724 arrivals at
-// the bus stop, matched tolerantly (Carris sometimes serves line_id as an
-// internal trip code instead of "1724" during its instability episodes, so
-// either field looking right is enough), optionally extended with today's
-// published schedule for anything live data doesn't reach yet.
+// the bus stop, filtered to the Linda-a-velha direction, optionally extended
+// with today's published schedule for anything live data doesn't reach yet.
 async function commuteUpcomingBuses(busData, now, extendToUnix) {
   let upcoming = busData
     .map(a => ({ ...a, sortUnix: a.estimated_arrival_unix || a.scheduled_arrival_unix }))
     .filter(a => a.sortUnix && a.sortUnix >= now - 30)
-    .filter(a => String(a.line_id || '').includes('1724') || (a.headsign || '').toLowerCase().includes('linda'))
+    .filter(a => isCommuteBusHeadsign(a.headsign))
     .sort((a, b) => a.sortUnix - b.sortUnix);
 
   if (extendToUnix != null && (!upcoming.length || upcoming[upcoming.length - 1].sortUnix < extendToUnix)) {
@@ -1005,6 +1013,7 @@ async function commuteUpcomingBuses(busData, now, extendToUnix) {
     const todayStr = formatDateStr(new Date(now * 1000));
     const scheduled = await getScheduledFallback(stop).catch(() => []);
     scheduled.forEach(t => {
+      if (!isCommuteBusHeadsign(t.headsign)) return;
       const [h, m] = t.time.split(':').map(Number);
       const d = parseDateStr(todayStr);
       d.setHours(h, m, 0, 0);
